@@ -1,0 +1,70 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Output of the 'go build' and 'go run' commands
+*.out
+
+# GoLand project files
+.idea/
+
+# Vendor directory for dependencies (if used without vendoring)
+vendor/
+
+# Logs
+*.log
+
+# Common Go build artifacts
+*.o
+*.a
+
+# Dependency directories (often excluded when using tools like dep or Go modules)
+bin/
+pkg/
+
+# Cover profile and rich test output files
+*.cover
+*.cov
+
+# Test data
+testdata/
+
+# Node.js files (if you're using JavaScript/TypeScript alongside Go)
+node_modules/
+
+# Temporary files
+*.tmp
+*.temp
+
+# System files/macOS or Linux junk files
+.DS_Store
+Thumbs.db
+
+# Config-generated files
+.env
+.env.*
+
+# Exclude any local private credentials
+*.key
+*.crt
+*.pem
+*.kube/
+
+# Vim temporary files
+*.swp
+*.swo
+*~
+
+# Go module config backup files
+go.sum.old
+go.mod.old
+
+# Ignore debugging artifacts
+debug/
+
+# Exclude Gopls cache (Go Language Server Protocol)
+.gopls/
