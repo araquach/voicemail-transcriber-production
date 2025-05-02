@@ -3,7 +3,7 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  - name: 'gcr.io/cloud-builders/go:1.23'
+  - name: 'gcr.io/cloud-builders/go:1.21'
     entrypoint: 'go'
     args: ['build', './cmd/server']
 
