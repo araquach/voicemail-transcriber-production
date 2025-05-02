@@ -1,4 +1,4 @@
-name: voicemailTranscriber
+name: voicemail-transcriber
 options:
   logging: CLOUD_LOGGING_ONLY
 
@@ -12,7 +12,7 @@ steps:
       [
         'run',
         'deploy',
-        'voicemailTranscriber',
+        'voicemail-transcriber',
         '--image=gcr.io/$PROJECT_ID/voicemail-transcriber',
         '--region=europe-west1',
         '--allow-unauthenticated',
