@@ -17,7 +17,7 @@ steps:
         '--gen2',
         '--runtime=go121',
         '--entry-point=HandleRequest',
-        '--region=europe-west2',
+        '--region=europe-west1',
         '--trigger-http',
         '--allow-unauthenticated',
         '--set-env-vars=GCP_PROJECT_ID=...,PUBSUB_TOPIC_NAME=...,EMAIL_RESPONSE_ADDRESS=...'
