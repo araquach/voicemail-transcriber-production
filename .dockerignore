@@ -1,0 +1,25 @@
+# Ignore environment files
+.env*
+*.env
+
+# Git stuff
+.git
+.gitignore
+
+# Docs
+README.md
+LICENSE
+
+# Editor/IDE files
+.vscode/
+.idea/
+
+# Python cache (if used anywhere)
+__pycache__/
+
+# Node stuff (in case of hybrid project)
+node_modules/
+
+# OS metadata
+.DS_Store
+Thumbs.db
