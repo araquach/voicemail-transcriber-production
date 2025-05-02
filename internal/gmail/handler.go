@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/oauth2"
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
 	"io"
@@ -101,9 +102,8 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := auth.LoadToken("token.json")
 	ctx := context.Background()
-	client := auth.Config.Client(ctx, token)
+	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(auth.LoadToken()))
 
 	fsClient, err := firestore.NewClient(ctx, os.Getenv("GCP_PROJECT_ID"))
 	if err != nil {
@@ -133,9 +133,8 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) {
 func HistoryRetrieveHandler(w http.ResponseWriter, r *http.Request) {
 	logger.Info.Println("🔍 Manual history polling started")
 
-	token := auth.LoadToken("token.json")
 	ctx := context.Background()
-	client := auth.Config.Client(ctx, token)
+	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(auth.LoadToken()))
 
 	srv, err := gmail.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {

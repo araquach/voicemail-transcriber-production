@@ -21,41 +21,25 @@ import (
 func main() {
 	logger.Init()
 	config.LoadEnv()
-	auth.SetupOAuthConfig()
 
-	authURL := auth.Config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	logger.Info.Println("🔗 Visit this URL to authenticate:", authURL)
+	// Load token once
+	ctx := context.Background()
+	token := auth.LoadToken()
+	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(token))
 
-	// Try to seed Firestore with initial history ID if authenticated
-	if _, err := os.Stat("token.json"); err == nil {
-		token := auth.LoadToken("token.json")
-		ctx := context.Background()
-		client := auth.Config.Client(ctx, token)
-
-		srv, err := gmailapi.NewService(ctx, option.WithHTTPClient(client))
-		if err == nil {
-			err = gmail.InitFirestoreHistory(ctx, srv, nil)
-			if err != nil {
-				logger.Warn.Printf("⚠️ Failed to seed Firestore with history ID: %v", err)
-			}
-		} else {
-			logger.Error.Printf("Failed to create Gmail client: %v", err)
-		}
+	// Setup Gmail service
+	srv, err := gmailapi.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		logger.Error.Fatalf("Failed to create Gmail client: %v", err)
 	}
 
-	http.HandleFunc("/callback", auth.HandleCallback)
+	// Try to seed Firestore
+	if err := gmail.InitFirestoreHistory(ctx, srv, nil); err != nil {
+		logger.Warn.Printf("⚠️ Failed to seed Firestore with history ID: %v", err)
+	}
+
 	http.HandleFunc("/retrieve", gmail.HistoryRetrieveHandler)
 	http.HandleFunc("/setup-watch", func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.Background()
-		token := auth.LoadToken("token.json")
-		client := auth.Config.Client(ctx, token)
-
-		srv, err := gmailapi.NewService(ctx, option.WithHTTPClient(client))
-		if err != nil {
-			http.Error(w, "Failed to create Gmail service", 500)
-			return
-		}
-
 		req := &gmailapi.WatchRequest{
 			TopicName: os.Getenv("PUBSUB_TOPIC_NAME"),
 			LabelIds:  []string{"INBOX"},
