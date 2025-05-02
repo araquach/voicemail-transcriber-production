@@ -1,3 +1,7 @@
+name: voicemailTranscriber
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/$PROJECT_ID/voicemail-transcriber', '.']
@@ -6,15 +10,11 @@ steps:
     entrypoint: 'gcloud'
     args:
       [
-        'functions', 'deploy', 'voicemailTranscriber',
-        '--gen2',
-        '--runtime=custom',
-        '--entry-point=HandleRequest',
+        'run',
+        'deploy',
+        'voicemailTranscriber',
+        '--image=gcr.io/$PROJECT_ID/voicemail-transcriber',
         '--region=europe-west1',
-        '--trigger-http',
         '--allow-unauthenticated',
-        '--source=.',
-        '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk'
+        '--set-env-vars=GCP_PROJECT_ID=...,PUBSUB_TOPIC_NAME=...,EMAIL_RESPONSE_ADDRESS=...'
       ]
-
-timeout: "900s"  # 15 minutes
