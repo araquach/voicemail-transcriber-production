@@ -1,16 +1,24 @@
-steps:
-  - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        gcloud functions deploy voicemailTranscriber \
-          --gen2 \
-          --runtime=go121 \
-          --entry-point=HandleRequest \
-          --trigger-http \
-          --allow-unauthenticated \
-          --region=europe-west2 \
-          --set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk
+name: voicemailTranscriber
+options:
+  logging: CLOUD_LOGGING_ONLY
 
-timeout: 900s
+steps:
+  - name: 'gcr.io/cloud-builders/go'
+    entrypoint: 'go'
+    args: ['build', './cmd/server']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      [
+        'functions',
+        'deploy',
+        'voicemailTranscriber',
+        '--gen2',
+        '--runtime=go121',
+        '--entry-point=HandleRequest',
+        '--region=europe-west2',
+        '--trigger-http',
+        '--allow-unauthenticated',
+        '--set-env-vars=GCP_PROJECT_ID=...,PUBSUB_TOPIC_NAME=...,EMAIL_RESPONSE_ADDRESS=...'
+      ]
