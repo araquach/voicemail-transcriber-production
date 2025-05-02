@@ -16,5 +16,5 @@ steps:
         '--image=gcr.io/$PROJECT_ID/voicemail-transcriber',
         '--region=europe-west1',
         '--allow-unauthenticated',
-        '--set-env-vars=GCP_PROJECT_ID=...,PUBSUB_TOPIC_NAME=...,EMAIL_RESPONSE_ADDRESS=...'
+        '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk'
       ]
