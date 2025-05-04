@@ -8,8 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
-
 	"voicemail-transcriber-production/internal/auth"
 	"voicemail-transcriber-production/internal/config"
 	"voicemail-transcriber-production/internal/gmail"
@@ -56,15 +54,8 @@ func main() {
 		fmt.Fprintln(w, "✅ Gmail watch successfully re-established!")
 	})
 
-	// Wait for token to be ready before enabling /notify
-	go func() {
-		for !auth.IsTokenReady {
-			fmt.Println("⏳ Waiting for token to become ready before enabling /notify...")
-			time.Sleep(1 * time.Second)
-		}
-		http.HandleFunc("/notify", gmail.PubSubHandler)
-		fmt.Println("✅ /notify handler is now active")
-	}()
+	http.HandleFunc("/notify", gmail.PubSubHandler)
+	logger.Info.Println("✅ /notify handler registered")
 
 	logger.Info.Println("🚀 Listening on :8080...")
 	log.Fatal(http.ListenAndServe(":8080", nil))
