@@ -57,6 +57,10 @@ func main() {
 	http.HandleFunc("/notify", gmail.PubSubHandler)
 	logger.Info.Println("✅ /notify handler registered")
 
-	logger.Info.Println("🚀 Listening on :8080...")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	logger.Info.Printf("🚀 Listening on :%s...", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
