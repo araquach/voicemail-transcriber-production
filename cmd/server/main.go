@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"golang.org/x/oauth2"
 	gmailapi "google.golang.org/api/gmail/v1"
-	"log"
 	"net/http"
 	"os"
 	"voicemail-transcriber-production/internal/auth"
@@ -62,5 +61,7 @@ func main() {
 		port = "8080"
 	}
 	logger.Info.Printf("🚀 Listening on :%s...", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		logger.Error.Fatalf("❌ Server failed to start: %v", err)
+	}
 }
