@@ -9,7 +9,7 @@ RUN go mod download
 
 # Copy everything and build
 COPY . .
-RUN go build -o server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-extldflags=-static" -o server ./cmd/server
 
 # 🏁 Runtime stage
 FROM debian:bullseye-slim
