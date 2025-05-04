@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"voicemail-transcriber-production/internal/auth"
-	"voicemail-transcriber-production/internal/config"
 	"voicemail-transcriber-production/internal/gmail"
 	"voicemail-transcriber-production/internal/logger"
 
@@ -17,7 +16,6 @@ import (
 
 func main() {
 	logger.Init()
-	config.LoadEnv()
 
 	// Load token once
 	ctx := context.Background()
