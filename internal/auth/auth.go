@@ -1,33 +1,34 @@
 package auth
 
 import (
-	"encoding/json"
+	"context"
+	"fmt"
 	"os"
 
 	"voicemail-transcriber-production/internal/logger"
-	"voicemail-transcriber-production/internal/secret"
 
-	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/gmail/v1"
+	"google.golang.org/api/option"
 )
 
 var IsTokenReady bool = false
 
-func LoadToken() *oauth2.Token {
-	creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	logger.Debug.Printf("GOOGLE_APPLICATION_CREDENTIALS = %s", creds)
+func LoadGmailService(ctx context.Context) (*gmail.Service, error) {
 	logger.Debug.Printf("GCP_PROJECT_ID = %s", os.Getenv("GCP_PROJECT_ID"))
-	if creds == "" {
-		logger.Error.Fatal("GOOGLE_APPLICATION_CREDENTIALS not set")
-	}
 
-	data, err := secret.LoadSecret("gmail-token-json")
+	creds, err := google.FindDefaultCredentials(ctx, gmail.GmailSendScope)
 	if err != nil {
-		logger.Error.Fatalf("Unable to load token from Secret Manager: %v", err)
+		logger.Error.Printf("Failed to get default credentials: %v", err)
+		return nil, fmt.Errorf("could not get default credentials: %w", err)
 	}
 
-	var token oauth2.Token
-	if err := json.Unmarshal(data, &token); err != nil {
-		logger.Error.Fatalf("Unable to parse token JSON: %v", err)
+	srv, err := gmail.NewService(ctx, option.WithCredentials(creds))
+	if err != nil {
+		logger.Error.Printf("Failed to create Gmail service: %v", err)
+		return nil, fmt.Errorf("could not create Gmail service: %w", err)
 	}
-	return &token
+
+	IsTokenReady = true
+	return srv, nil
 }

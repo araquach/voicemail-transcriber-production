@@ -3,29 +3,21 @@ package main
 import (
 	"context"
 	"fmt"
-	"golang.org/x/oauth2"
 	gmailapi "google.golang.org/api/gmail/v1"
 	"net/http"
 	"os"
 	"voicemail-transcriber-production/internal/auth"
 	"voicemail-transcriber-production/internal/gmail"
 	"voicemail-transcriber-production/internal/logger"
-
-	"google.golang.org/api/option"
 )
 
 func main() {
 	logger.Init()
 
-	// Load token once
 	ctx := context.Background()
-	token := auth.LoadToken()
-	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(token))
-
-	// Setup Gmail service
-	srv, err := gmailapi.NewService(ctx, option.WithHTTPClient(client))
+	srv, err := auth.LoadGmailService(ctx)
 	if err != nil {
-		logger.Error.Fatalf("Failed to create Gmail client: %v", err)
+		logger.Error.Fatalf("Failed to load Gmail service: %v", err)
 	}
 
 	// Try to seed Firestore

@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
 	"io"
@@ -103,7 +103,12 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := context.Background()
-	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(auth.LoadToken()))
+	client, err := google.DefaultClient(ctx, gmail.GmailReadonlyScope, gmail.GmailModifyScope)
+	if err != nil {
+		logger.Error.Printf("❌ Failed to get default client: %v", err)
+		http.Error(w, "Unable to get default client", http.StatusInternalServerError)
+		return
+	}
 
 	fsClient, err := firestore.NewClient(ctx, os.Getenv("GCP_PROJECT_ID"))
 	if err != nil {
@@ -134,7 +139,12 @@ func HistoryRetrieveHandler(w http.ResponseWriter, r *http.Request) {
 	logger.Info.Println("🔍 Manual history polling started")
 
 	ctx := context.Background()
-	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(auth.LoadToken()))
+	client, err := google.DefaultClient(ctx, gmail.GmailReadonlyScope, gmail.GmailModifyScope)
+	if err != nil {
+		logger.Error.Printf("❌ Failed to get default client: %v", err)
+		http.Error(w, "Unable to get default client", http.StatusInternalServerError)
+		return
+	}
 
 	srv, err := gmail.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {

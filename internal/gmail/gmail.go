@@ -1,16 +1,15 @@
 package gmail
 
 import (
-	"cloud.google.com/go/firestore"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"voicemail-transcriber-production/internal/logger"
-
+	"cloud.google.com/go/firestore"
 	"google.golang.org/api/gmail/v1"
+	"voicemail-transcriber-production/internal/logger"
 )
 
 func SaveAttachment(srv *gmail.Service, user, msgID string, part *gmail.MessagePart, downloadDir string) (string, error) {
