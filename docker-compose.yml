@@ -1,0 +1,17 @@
+version: "3.9"
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.dev
+    volumes:
+      # Use a read-only mount for specific folders to avoid overwriting the binary at /app
+      - ./keys/credentials.json:/secrets/credentials.json:ro
+      # Uncomment the next line only if you need development mount (and place local files elsewhere)
+      # - ./local:/local
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/credentials.json

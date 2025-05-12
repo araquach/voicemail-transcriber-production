@@ -103,10 +103,12 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := context.Background()
-	client, err := google.DefaultClient(ctx, gmail.GmailReadonlyScope, gmail.GmailModifyScope)
+
+	// ✅ Use centralised auth
+	srv, err := auth.LoadGmailService(ctx)
 	if err != nil {
-		logger.Error.Printf("❌ Failed to get default client: %v", err)
-		http.Error(w, "Unable to get default client", http.StatusInternalServerError)
+		logger.Error.Printf("❌ Unable to create Gmail service: %v", err)
+		http.Error(w, "Failed to create Gmail service", http.StatusInternalServerError)
 		return
 	}
 
@@ -115,13 +117,6 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) {
 		logger.Error.Fatalf("❌ Failed to create Firestore client: %v", err)
 	}
 	defer fsClient.Close()
-
-	srv, err := gmail.NewService(ctx, option.WithHTTPClient(client))
-	if err != nil {
-		logger.Error.Printf("❌ Unable to create Gmail service: %v", err)
-		http.Error(w, "Failed to create Gmail service", http.StatusInternalServerError)
-		return
-	}
 
 	logger.Info.Printf("📩 Received Pub/Sub notification for: %s (History ID: %d)", notificationData.EmailAddress, notificationData.HistoryId)
 
