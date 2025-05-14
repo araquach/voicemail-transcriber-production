@@ -53,7 +53,7 @@ Thumbs.db
 *.crt
 *.pem
 *.kube/
-keys/
+secrets/
 
 # Vim temporary files
 *.swp

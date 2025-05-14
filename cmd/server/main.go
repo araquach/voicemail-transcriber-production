@@ -9,7 +9,17 @@ import (
 	"voicemail-transcriber-production/internal/auth"
 	"voicemail-transcriber-production/internal/gmail"
 	"voicemail-transcriber-production/internal/logger"
+
+	"cloud.google.com/go/firestore"
 )
+
+func NewFirestoreClient(ctx context.Context) (*firestore.Client, error) {
+	projectID := os.Getenv("GCP_PROJECT_ID")
+	if projectID == "" {
+		return nil, fmt.Errorf("GCP_PROJECT_ID environment variable not set")
+	}
+	return firestore.NewClient(ctx, projectID)
+}
 
 func main() {
 	logger.Init()
@@ -20,9 +30,21 @@ func main() {
 		logger.Error.Fatalf("Failed to load Gmail service: %v", err)
 	}
 
-	// Try to seed Firestore
-	if err := gmail.InitFirestoreHistory(ctx, srv, nil); err != nil {
-		logger.Warn.Printf("⚠️ Failed to seed Firestore with history ID: %v", err)
+	fsClient, err := NewFirestoreClient(ctx)
+	if err != nil {
+		logger.Error.Fatalf("Failed to initialize Firestore client: %v", err)
+	}
+	defer fsClient.Close()
+
+	msg, err := gmail.GetLatestMessage(srv, "me")
+	if err != nil {
+		logger.Warn.Printf("⚠️ Failed to fetch latest Gmail message: %v", err)
+	} else {
+		if err := gmail.SaveHistoryIDToFirestore(ctx, fsClient, msg.HistoryId); err != nil {
+			logger.Warn.Printf("⚠️ Failed to overwrite history ID in Firestore: %v", err)
+		} else {
+			logger.Info.Printf("✅ Latest Gmail history ID (%v) saved to Firestore", msg.HistoryId)
+		}
 	}
 
 	http.HandleFunc("/retrieve", gmail.HistoryRetrieveHandler)

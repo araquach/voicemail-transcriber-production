@@ -21,7 +21,7 @@ func TranscribeAndRespond(ctx context.Context, filePath string, srv *gmail.Servi
 		Language:    "en-US",
 		SmartFormat: true,
 	}
-	apiKey, err := secret.LoadSecret("deepgram-api-key")
+	apiKey, err := secret.LoadSecret(ctx, "deepgram-api-key")
 	if err != nil {
 		logger.Error.Printf("❌ Failed to load Deepgram API key: %v", err)
 		return err

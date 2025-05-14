@@ -1,5 +1,5 @@
 # Ignore environment files
-.env
+#.env
 
 # Git stuff
 .git
@@ -24,4 +24,4 @@ node_modules/
 Thumbs.db
 
 # Secrets and credentials
-keys/
+# secrets/

@@ -10,8 +10,10 @@ import (
 )
 
 // LoadSecret fetches the latest version of a secret from Secret Manager
-func LoadSecret(secretName string) ([]byte, error) {
-	ctx := context.Background()
+func LoadSecret(ctx context.Context, secretName string) ([]byte, error) {
+	if secretName == "" {
+		return nil, fmt.Errorf("secret name must not be empty")
+	}
 
 	client, err := secretmanager.NewClient(ctx)
 	if err != nil {

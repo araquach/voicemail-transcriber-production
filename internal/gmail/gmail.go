@@ -86,3 +86,20 @@ func LoadHistoryIDFromFirestore(ctx context.Context, client *firestore.Client) (
 		return 0, fmt.Errorf("unexpected type for historyId: %T", id)
 	}
 }
+
+func GetLatestMessage(srv *gmail.Service, user string) (*gmail.Message, error) {
+	msgs, err := srv.Users.Messages.List(user).MaxResults(1).LabelIds("INBOX").Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list messages: %w", err)
+	}
+	if len(msgs.Messages) == 0 {
+		return nil, fmt.Errorf("no messages found")
+	}
+
+	msgID := msgs.Messages[0].Id
+	msg, err := srv.Users.Messages.Get(user, msgID).Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get message: %w", err)
+	}
+	return msg, nil
+}

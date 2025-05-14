@@ -6,19 +6,9 @@ require (
 	cloud.google.com/go/firestore v1.18.0
 	cloud.google.com/go/secretmanager v1.14.6
 	github.com/deepgram/deepgram-go-sdk v1.1.3
-	github.com/joho/godotenv v1.5.1
 	golang.org/x/oauth2 v0.28.0
 	google.golang.org/api v0.228.0
 	google.golang.org/genproto v0.0.0-20250324211829-b45e905df463
-)
-
-require (
-	github.com/dvonthenen/websocket v1.5.1-dyv.2 // indirect
-	github.com/fatih/color v1.15.0 // indirect
-	github.com/gorilla/schema v1.3.0 // indirect
-	github.com/hokaccha/go-prettyjson v0.0.0-20211117102719-0474bc63780f // indirect
-	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.17 // indirect
 )
 
 require (
@@ -27,7 +17,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
 	cloud.google.com/go/iam v1.4.1 // indirect
-	cloud.google.com/go/longrunning v0.6.4 // indirectC
+	cloud.google.com/go/longrunning v0.6.4 // indirect; indirectC
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
