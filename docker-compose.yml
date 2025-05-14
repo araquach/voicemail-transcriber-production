@@ -9,6 +9,4 @@ services:
     env_file:
       - .env.jakata
     volumes:
-      - ./secrets:/secrets:ro
-    environment:
-      GOOGLE_APPLICATION_CREDENTIALS: /secrets/credentials.json
+      - ${PWD}/secrets:/secrets:ro
