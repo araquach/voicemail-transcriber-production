@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"voicemail-transcriber-production/internal/secret"
 
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
@@ -19,23 +20,17 @@ func LoadGmailService(ctx context.Context) (*gmail.Service, error) {
 	}
 	fmt.Printf("Impersonating user: %s\n", userToImpersonate)
 
-	credentialsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	if credentialsFile == "" {
-		return nil, fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS must be set")
+	// Load credentials from Secret Manager with correct secret name
+	jsonCredentials, err := secret.LoadSecret(ctx, "gmail-credentials-json")
+	if err != nil {
+		return nil, fmt.Errorf("error loading credentials from Secret Manager: %w", err)
 	}
-	fmt.Printf("Using credentials file: %s\n", credentialsFile)
 
 	scopes := []string{
 		gmail.GmailSendScope,
 		gmail.GmailModifyScope,
 		gmail.GmailReadonlyScope,
 	}
-
-	jsonCredentials, err := os.ReadFile(credentialsFile)
-	if err != nil {
-		return nil, fmt.Errorf("error reading credentials file: %w", err)
-	}
-	fmt.Printf("Successfully read credentials file (%d bytes)\n", len(jsonCredentials))
 
 	config, err := google.JWTConfigFromJSON(jsonCredentials, scopes...)
 	if err != nil {
