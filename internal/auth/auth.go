@@ -28,18 +28,25 @@ func LoadGmailService(ctx context.Context) (*gmail.Service, error) {
 	}
 	logger.Info.Println("✅ Retrieved credentials from Secret Manager")
 
-	// Create credentials configuration with explicit credentials
-	creds, err := google.CredentialsFromJSON(ctx, jsonCredentials,
+	// Create credentials configuration
+	config, err := google.JWTConfigFromJSON(jsonCredentials,
 		gmail.GmailSendScope,
 		gmail.GmailModifyScope,
 		gmail.GmailReadonlyScope,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error creating credentials: %w", err)
+		return nil, fmt.Errorf("error parsing credentials: %w", err)
 	}
 
-	// Create the Gmail service with explicit credentials
-	srv, err := gmail.NewService(ctx, option.WithCredentials(creds))
+	// Set up impersonation
+	config.Subject = userToImpersonate
+	logger.Info.Printf("👤 Impersonating: %s", config.Subject)
+
+	// Create token source
+	tokenSource := config.TokenSource(ctx)
+
+	// Create the Gmail service with the token source
+	srv, err := gmail.NewService(ctx, option.WithTokenSource(tokenSource))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gmail service: %w", err)
 	}
