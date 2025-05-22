@@ -202,14 +202,14 @@ func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uin
 						logger.Error.Printf("Failed to parse From header: %v", err)
 						continue
 					}
-					//if parsed.Address != "noreply@btonephone.com" {
-					//	logger.Debug.Printf("⏭️ Skipping message from %s", parsed.Address)
-					//	continue
-					//}
-					if parsed.Address != "araquach@yahoo.co.uk" {
+					if parsed.Address != "noreply@btonephone.com" {
 						logger.Debug.Printf("⏭️ Skipping message from %s", parsed.Address)
 						continue
 					}
+					//if parsed.Address != "araquach@yahoo.co.uk" {
+					//	logger.Debug.Printf("⏭️ Skipping message from %s", parsed.Address)
+					//	continue
+					//}
 
 					for _, part := range msg.Payload.Parts {
 						if part.Filename != "" && part.Body.AttachmentId != "" {
