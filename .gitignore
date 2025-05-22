@@ -69,3 +69,4 @@ debug/
 
 # Exclude Gopls cache (Go Language Server Protocol)
 .gopls/
+

@@ -11,6 +11,7 @@ import (
 	"google.golang.org/api/gmail/v1"
 	"os"
 	"regexp"
+	"strings"
 	"voicemail-transcriber-production/internal/logger"
 	"voicemail-transcriber-production/internal/secret"
 )
@@ -21,12 +22,17 @@ func TranscribeAndRespond(ctx context.Context, filePath string, srv *gmail.Servi
 		Language:    "en-US",
 		SmartFormat: true,
 	}
-	apiKey, err := secret.LoadSecret(ctx, "deepgram-api-key")
+
+	var apiKey string
+
+	secretBytes, err := secret.LoadSecret(ctx, "deepgram-api-key")
 	if err != nil {
 		logger.Error.Printf("❌ Failed to load Deepgram API key: %v", err)
 		return err
 	}
-	c := client.New(string(apiKey), interfaces.ClientOptions{Host: "https://api.deepgram.com"})
+	apiKey = strings.TrimSpace(string(secretBytes))
+
+	c := client.New(apiKey, interfaces.ClientOptions{Host: "https://api.deepgram.com"})
 	dg := prerecorded.New(c)
 
 	res, err := dg.FromFile(ctx, filePath, options)
