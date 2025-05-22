@@ -22,5 +22,5 @@ steps:
       '--image=europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber',
       '--region=europe-west1',
       '--allow-unauthenticated',
-      '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk'
+      '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk,PORT=8080'
     ]

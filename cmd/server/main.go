@@ -109,6 +109,11 @@ func main() {
 	http.HandleFunc("/notify", gmail.PubSubHandler)
 	logger.Info.Println("✅ /notify handler registered")
 
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "OK")
+	})
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
