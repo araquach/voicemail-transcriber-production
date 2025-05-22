@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"voicemail-transcriber-production/internal/logger"
 	"voicemail-transcriber-production/internal/secret"
 
 	"golang.org/x/oauth2/google"
@@ -18,44 +19,45 @@ func LoadGmailService(ctx context.Context) (*gmail.Service, error) {
 	if userToImpersonate == "" {
 		return nil, fmt.Errorf("EMAIL_RESPONSE_ADDRESS must be set")
 	}
-	fmt.Printf("Impersonating user: %s\n", userToImpersonate)
+	logger.Info.Printf("🔑 Loading credentials for: %s", userToImpersonate)
 
-	// Load credentials from Secret Manager with correct secret name
+	// Load credentials from Secret Manager
 	jsonCredentials, err := secret.LoadSecret(ctx, "gmail-credentials-json")
 	if err != nil {
 		return nil, fmt.Errorf("error loading credentials from Secret Manager: %w", err)
 	}
+	logger.Info.Println("✅ Retrieved credentials from Secret Manager")
 
-	scopes := []string{
+	// Create credentials configuration
+	config, err := google.JWTConfigFromJSON(jsonCredentials,
 		gmail.GmailSendScope,
 		gmail.GmailModifyScope,
 		gmail.GmailReadonlyScope,
-	}
-
-	config, err := google.JWTConfigFromJSON(jsonCredentials, scopes...)
+	)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing credentials: %w", err)
 	}
-	fmt.Printf("Service account email: %s\n", config.Email)
 
+	// Set up impersonation
 	config.Subject = userToImpersonate
-	fmt.Printf("Set impersonation subject to: %s\n", config.Subject)
+	logger.Info.Printf("👤 Impersonating: %s", config.Subject)
 
-	ts := config.TokenSource(ctx)
-	fmt.Println("Created token source")
+	// Create token source
+	tokenSource := config.TokenSource(ctx)
 
-	srv, err := gmail.NewService(ctx, option.WithTokenSource(ts))
+	// Create the Gmail service with the token source
+	srv, err := gmail.NewService(ctx, option.WithTokenSource(tokenSource))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gmail service: %w", err)
 	}
 
-	// Try a simple API call to verify credentials
+	// Verify credentials
 	_, err = srv.Users.GetProfile("me").Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify credentials: %w", err)
 	}
 
 	IsTokenReady = true
-	fmt.Println("Successfully created and verified Gmail service")
+	logger.Info.Println("✅ Gmail service successfully initialized")
 	return srv, nil
 }
