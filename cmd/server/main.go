@@ -58,6 +58,8 @@ func refreshWatchPeriodically(srv *gmailapi.Service, done chan bool) {
 
 func main() {
 	logger.Init()
+	logger.Info.Println("🚀 Starting voicemail transcriber service...")
+	logger.PrintEnvSummary() // This will print all environment variables
 
 	ctx := context.Background()
 	srv, err := auth.LoadGmailService(ctx)

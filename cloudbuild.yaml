@@ -23,5 +23,12 @@ steps:
       '--region=europe-west1',
       '--allow-unauthenticated',
       '--service-account=voicemail-transcriber@voicemail-transcribe-454814.iam.gserviceaccount.com',
+      '--timeout=300s',
+      '--cpu=1',
+      '--memory=512Mi',
+      '--min-instances=1',
+      '--port=8080',
+      '--use-http2',
+      '--startup-cpu-boost',
       '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk,PORT=8080'
     ]
