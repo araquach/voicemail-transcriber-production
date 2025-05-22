@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	secretpb "google.golang.org/genproto/googleapis/cloud/secretmanager/v1"
@@ -11,6 +12,13 @@ import (
 
 // LoadSecret fetches the latest version of a secret from Secret Manager
 func LoadSecret(ctx context.Context, secretName string) ([]byte, error) {
+	// First check if secret is available as environment variable
+	envName := strings.ToUpper(strings.ReplaceAll(secretName, "-", "_"))
+	if envValue := os.Getenv(envName); envValue != "" {
+		return []byte(envValue), nil
+	}
+
+	// If not in environment, fall back to Secret Manager
 	if secretName == "" {
 		return nil, fmt.Errorf("secret name must not be empty")
 	}
