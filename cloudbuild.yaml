@@ -37,7 +37,7 @@ steps:
       '--startup-cpu-boost',
       '--cpu-throttling',
       '--set-env-vars=^##^GCP_PROJECT_ID=voicemail-transcribe-454814##PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications##EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk##PORT=8080',
-      '--update-secrets=^##^DEEPGRAM_API_KEY=deepgram-api-key:latest##gmail-service-account=gmail-service-account:latest'
+      '--update-secrets=DEEPGRAM_API_KEY=deepgram-api-key:latest',
       '--ingress=all',
       '--startup-probe-path=/health',
       '--startup-probe-initial-delay=10s',
