@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"voicemail-transcriber-production/internal/logger"
+	"voicemail-transcriber-production/internal/secret"
 
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
@@ -18,46 +19,72 @@ func LoadGmailService(ctx context.Context) (*gmail.Service, error) {
 	if userToImpersonate == "" {
 		return nil, fmt.Errorf("EMAIL_RESPONSE_ADDRESS must be set")
 	}
-	logger.Info.Printf("🔑 Setting up service account for impersonation of: %s", userToImpersonate)
+	logger.Info.Printf("🔍 Debug: Starting Gmail service initialization for: %s", userToImpersonate)
 
-	// First, create the JWT config for domain-wide delegation
+	// Load service account credentials
+	credBytes, err := secret.LoadSecret(ctx, "gmail-service-account")
+	if err != nil {
+		logger.Error.Printf("❌ Debug: Failed to load service account credentials: %v", err)
+		return nil, fmt.Errorf("failed to load service account credentials: %w", err)
+	}
+	logger.Info.Printf("✅ Debug: Successfully loaded service account credentials")
+
 	scopes := []string{
 		gmail.GmailSendScope,
 		gmail.GmailModifyScope,
 		gmail.GmailReadonlyScope,
 	}
 
-	config, err := google.JWTConfigFromJSON([]byte(""), scopes...)
+	// Create JWT config from service account
+	config, err := google.JWTConfigFromJSON(credBytes, scopes...)
 	if err != nil {
+		logger.Error.Printf("❌ Debug: Failed to create JWT config: %v", err)
 		return nil, fmt.Errorf("failed to create JWT config: %w", err)
 	}
+	logger.Info.Printf("✅ Debug: Successfully created JWT config")
 
 	// Set up domain-wide delegation
 	config.Subject = userToImpersonate
+	logger.Info.Printf("🔍 Debug: Set impersonation subject to: %s", userToImpersonate)
 
-	// Create the credentials with impersonation
+	// Create token source
 	ts := config.TokenSource(ctx)
+	logger.Info.Printf("✅ Debug: Created token source")
 
-	// Create the Gmail service with the impersonated credentials
+	// Test token generation
+	token, err := ts.Token()
+	if err != nil {
+		logger.Error.Printf("❌ Debug: Failed to generate token: %v", err)
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+	logger.Info.Printf("✅ Debug: Successfully generated token (expires: %v)", token.Expiry)
+
+	// Create Gmail service
 	srv, err := gmail.NewService(ctx,
 		option.WithTokenSource(ts),
 		option.WithScopes(scopes...),
 	)
 	if err != nil {
+		logger.Error.Printf("❌ Debug: Failed to create Gmail service: %v", err)
 		return nil, fmt.Errorf("failed to create Gmail service: %w", err)
 	}
+	logger.Info.Printf("✅ Debug: Successfully created Gmail service")
 
-	// Verify credentials with the impersonated account
+	// Verify credentials
 	profile, err := srv.Users.GetProfile("me").Do()
 	if err != nil {
-		return nil, fmt.Errorf("failed to verify credentials for %s: %w", userToImpersonate, err)
+		logger.Error.Printf("❌ Debug: Failed to verify credentials: %v", err)
+		return nil, fmt.Errorf("failed to verify credentials: %w", err)
 	}
 
 	if profile.EmailAddress != userToImpersonate {
-		return nil, fmt.Errorf("email mismatch: got %s, expected %s", profile.EmailAddress, userToImpersonate)
+		logger.Error.Printf("❌ Debug: Email mismatch - got: %s, expected: %s",
+			profile.EmailAddress, userToImpersonate)
+		return nil, fmt.Errorf("email mismatch: got %s, expected %s",
+			profile.EmailAddress, userToImpersonate)
 	}
 
 	IsTokenReady = true
-	logger.Info.Printf("✅ Gmail service successfully initialized for: %s", userToImpersonate)
+	logger.Info.Printf("✅ Debug: Gmail service fully initialized for: %s", userToImpersonate)
 	return srv, nil
 }
