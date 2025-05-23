@@ -26,12 +26,8 @@ steps:
       '--cpu=1',
       '--memory=512Mi',
       '--timeout=300s',
-      '--startup-cpu-boost',
       '--min-instances=1',
       '--port=8080',
       '--use-http2',
-      '--set-startup-probe-threshold=3',
-      '--set-startup-probe-period=10',
-      '--set-startup-probe-timeout=5',
       '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk,PORT=8080'
     ]
