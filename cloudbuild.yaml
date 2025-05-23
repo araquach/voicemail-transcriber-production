@@ -34,24 +34,13 @@ steps:
       '--port=8080',
       '--use-http2',
       '--timeout=300s',
-      '--startup-cpu-boost',
-      '--cpu-throttling',
+      '--cpu-boost',
       '--set-env-vars=^##^GCP_PROJECT_ID=voicemail-transcribe-454814##PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications##EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk##PORT=8080',
-      '--update-secrets=DEEPGRAM_API_KEY=deepgram-api-key:latest',
+      '--update-secrets=^##^DEEPGRAM_API_KEY=deepgram-api-key:latest##gmail-service-account=gmail-service-account:latest',
       '--ingress=all',
-      '--startup-probe-path=/health',
-      '--startup-probe-initial-delay=10s',
-      '--startup-probe-period=5s',
-      '--startup-probe-failure-threshold=3',
-      '--startup-probe-timeout=5s',
-      '--liveness-probe-path=/health',
-      '--liveness-probe-period=30s',
-      '--liveness-probe-timeout=5s',
-      '--liveness-probe-failure-threshold=3',
-      '--readiness-probe-path=/health',
-      '--readiness-probe-period=30s',
-      '--readiness-probe-timeout=5s',
-      '--readiness-probe-failure-threshold=3'
+      '--startup-probe=/health,initial_delay=10s,failure_threshold=3,timeout=5s,period=5s',
+      '--liveness-probe=/health,failure_threshold=3,timeout=5s,period=30s',
+      '--readiness-probe=/health,failure_threshold=3,timeout=5s,period=30s'
     ]
 
 options:
