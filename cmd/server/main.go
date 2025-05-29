@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	gmailapi "google.golang.org/api/gmail/v1"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -178,6 +180,15 @@ func main() {
 
 		logger.Info.Printf("📬 /notify invoked from: %s", r.RemoteAddr)
 
+		// 🕵️ Log the raw request body
+		body, _ := io.ReadAll(r.Body)
+		logger.Info.Printf("📨 Raw /notify body: %s", string(body))
+
+		// 🔁 Reuse body for PubSubHandler
+		r.Body = io.NopCloser(bytes.NewReader(body))
+
+		logger.Info.Println("🔍 About to call gmail.PubSubHandler")
+
 		err := gmail.PubSubHandler(w, r)
 		if err != nil {
 			logger.Error.Printf("❌ PubSubHandler error: %v", err)
@@ -195,7 +206,6 @@ func main() {
 			return
 		}
 
-		// ✅ If PubSubHandler succeeded and wrote response
 		logger.Info.Println("📬 PubSubHandler returned without error — success response already sent")
 	})
 
