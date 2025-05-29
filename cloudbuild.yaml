@@ -1,54 +1,33 @@
 name: voicemail-transcriber
-
 options:
   logging: CLOUD_LOGGING_ONLY
-  machineType: 'E2_HIGHCPU_8'
-  diskSizeGb: 100
 
 steps:
   - name: 'gcr.io/cloud-builders/docker'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        docker pull europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber:latest || true
+    args: [
+      'build', '-t',
+      'europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber', '.'
+    ]
 
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - build
-      - '-t'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber:$SHORT_SHA'
-      - '-t'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber:latest'
-      - '.'
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - push
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber:$SHORT_SHA'
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - push
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber:latest'
+    args: [
+      'push',
+      'europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber'
+    ]
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'gcloud'
-    args:
-      - run
-      - deploy
-      - voicemail-transcriber
-      - '--image=europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber:$SHORT_SHA'
-      - '--region=europe-west1'
-      - '--allow-unauthenticated'
-      - '--service-account=voicemail-transcriber@voicemail-transcribe-454814.iam.gserviceaccount.com'
-      - '--cpu=1'
-      - '--memory=512Mi'
-      - '--timeout=540s'
-      - '--min-instances=1'
-      - '--port=8080'
-      - '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk'
+    args: [
+      'run', 'deploy', 'voicemail-transcriber',
+      '--image=europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber',
+      '--region=europe-west1',
+      '--allow-unauthenticated',
+      '--service-account=voicemail-transcriber@voicemail-transcribe-454814.iam.gserviceaccount.com',
+      '--cpu=1',
+      '--memory=512Mi',
+      '--timeout=540s',  # Increased from 300s
+      '--min-instances=1',
+      '--port=8080',
+      '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk'
+    ]
 
-images:
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber:$SHORT_SHA'
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/voicemail-transcriber-repo/voicemail-transcriber:latest'
