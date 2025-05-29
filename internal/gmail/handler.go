@@ -3,18 +3,13 @@ package gmail
 import (
 	"cloud.google.com/go/firestore"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
-	"io"
 	"net/http"
 	"net/mail"
 	"os"
-	"time"
-	"voicemail-transcriber-production/internal/auth"
 	"voicemail-transcriber-production/internal/logger"
 	"voicemail-transcriber-production/internal/transcriber"
 )
@@ -58,110 +53,117 @@ func InitFirestoreHistory(ctx context.Context, srv *gmail.Service, fsClient *fir
 }
 
 func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
-	start := time.Now()
-	logger.Info.Printf("📨 Received PubSub request from: %s", r.RemoteAddr)
-
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-	defer cancel()
-
-	if !auth.IsTokenReady {
-		logger.Warn.Println("⚠️ Skipping Pub/Sub handling — token not ready")
-		return fmt.Errorf("app not ready: token not available yet")
-	}
-
-	if r.Method != http.MethodPost {
-		return fmt.Errorf("invalid method: %s", r.Method)
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		logger.Error.Printf("❌ Failed to read body: %v", err)
-		return fmt.Errorf("failed to read request body: %w", err)
-	}
-
-	logger.Debug.Printf("🐛 Raw body: %s", string(body))
-
-	var msg PubSubMessage
-	if err = json.Unmarshal(body, &msg); err != nil {
-		logger.Error.Printf("❌ Failed to unmarshal PubSub message: %v", err)
-		return fmt.Errorf("invalid JSON: %w", err)
-	}
-
-	decodedData, err := base64.StdEncoding.DecodeString(msg.Message.Data)
-	if err != nil {
-		logger.Error.Printf("❌ Failed to decode message data: %v", err)
-		return fmt.Errorf("invalid base64 data: %w", err)
-	}
-
-	logger.Debug.Printf("📨 Decoded Pub/Sub data: %s", decodedData)
-
-	var notificationData struct {
-		EmailAddress string `json:"emailAddress"`
-		HistoryId    uint64 `json:"historyId"`
-	}
-	if err = json.Unmarshal(decodedData, &notificationData); err != nil {
-		logger.Error.Printf("❌ Failed to unmarshal decoded data: %v", err)
-		return fmt.Errorf("invalid message format: %w", err)
-	}
-
-	fsClient, err := firestore.NewClient(ctx, os.Getenv("GCP_PROJECT_ID"))
-	if err != nil {
-		logger.Error.Printf("❌ Failed to create Firestore client: %v", err)
-		return fmt.Errorf("failed to create Firestore client: %w", err)
-	}
-	defer func() {
-		if err := fsClient.Close(); err != nil {
-			logger.Error.Printf("❌ Error closing Firestore client: %v", err)
-		}
-	}()
-
-	srv, err := auth.LoadGmailService(ctx)
-	if err != nil {
-		logger.Error.Printf("❌ Unable to create Gmail service: %v", err)
-		return fmt.Errorf("failed to create Gmail service: %w", err)
-	}
-
-	logger.Info.Printf("📩 Processing Pub/Sub notification for: %s (History ID: %d)",
-		notificationData.EmailAddress, notificationData.HistoryId)
-
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context error before history processing: %w", err)
-	}
-
-	previousHistoryID, err := LoadHistoryIDFromFirestore(ctx, fsClient)
-	if err != nil {
-		logger.Error.Printf("❌ Could not load history ID from Firestore: %v", err)
-		return fmt.Errorf("failed to load history ID: %w", err)
-	}
-
-	historyCtx, historyCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer historyCancel()
-
-	if err := retrieveHistory(historyCtx, srv, previousHistoryID, fsClient); err != nil {
-		if err == context.DeadlineExceeded {
-			logger.Error.Printf("❌ History retrieval timed out after 30 seconds")
-			return fmt.Errorf("history retrieval timeout: %w", err)
-		}
-		logger.Error.Printf("❌ Failed to retrieve history: %v", err)
-		return fmt.Errorf("failed to retrieve history: %w", err)
-	}
-
-	elapsed := time.Since(start)
-	logger.Info.Printf("✅ PubSub request processed successfully in %v", elapsed)
-
-	if elapsed > 40*time.Second {
-		logger.Warn.Printf("⚠️ Request processing took longer than expected: %v", elapsed)
-	}
-
-	// ✅ Write success HTTP response
-	w.Header().Set("Content-Type", "application/json")
+	logger.Info.Println("📬 PubSubHandler dummy activated")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-	})
-
+	w.Write([]byte(`{"status":"dummy-ok"}`))
 	return nil
 }
+
+//func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
+//	start := time.Now()
+//	logger.Info.Printf("📨 Received PubSub request from: %s", r.RemoteAddr)
+//
+//	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+//	defer cancel()
+//
+//	if !auth.IsTokenReady {
+//		logger.Warn.Println("⚠️ Skipping Pub/Sub handling — token not ready")
+//		return fmt.Errorf("app not ready: token not available yet")
+//	}
+//
+//	if r.Method != http.MethodPost {
+//		return fmt.Errorf("invalid method: %s", r.Method)
+//	}
+//
+//	body, err := io.ReadAll(r.Body)
+//	if err != nil {
+//		logger.Error.Printf("❌ Failed to read body: %v", err)
+//		return fmt.Errorf("failed to read request body: %w", err)
+//	}
+//
+//	logger.Debug.Printf("🐛 Raw body: %s", string(body))
+//
+//	var msg PubSubMessage
+//	if err = json.Unmarshal(body, &msg); err != nil {
+//		logger.Error.Printf("❌ Failed to unmarshal PubSub message: %v", err)
+//		return fmt.Errorf("invalid JSON: %w", err)
+//	}
+//
+//	decodedData, err := base64.StdEncoding.DecodeString(msg.Message.Data)
+//	if err != nil {
+//		logger.Error.Printf("❌ Failed to decode message data: %v", err)
+//		return fmt.Errorf("invalid base64 data: %w", err)
+//	}
+//
+//	logger.Debug.Printf("📨 Decoded Pub/Sub data: %s", decodedData)
+//
+//	var notificationData struct {
+//		EmailAddress string `json:"emailAddress"`
+//		HistoryId    uint64 `json:"historyId"`
+//	}
+//	if err = json.Unmarshal(decodedData, &notificationData); err != nil {
+//		logger.Error.Printf("❌ Failed to unmarshal decoded data: %v", err)
+//		return fmt.Errorf("invalid message format: %w", err)
+//	}
+//
+//	fsClient, err := firestore.NewClient(ctx, os.Getenv("GCP_PROJECT_ID"))
+//	if err != nil {
+//		logger.Error.Printf("❌ Failed to create Firestore client: %v", err)
+//		return fmt.Errorf("failed to create Firestore client: %w", err)
+//	}
+//	defer func() {
+//		if err := fsClient.Close(); err != nil {
+//			logger.Error.Printf("❌ Error closing Firestore client: %v", err)
+//		}
+//	}()
+//
+//	srv, err := auth.LoadGmailService(ctx)
+//	if err != nil {
+//		logger.Error.Printf("❌ Unable to create Gmail service: %v", err)
+//		return fmt.Errorf("failed to create Gmail service: %w", err)
+//	}
+//
+//	logger.Info.Printf("📩 Processing Pub/Sub notification for: %s (History ID: %d)",
+//		notificationData.EmailAddress, notificationData.HistoryId)
+//
+//	if err := ctx.Err(); err != nil {
+//		return fmt.Errorf("context error before history processing: %w", err)
+//	}
+//
+//	previousHistoryID, err := LoadHistoryIDFromFirestore(ctx, fsClient)
+//	if err != nil {
+//		logger.Error.Printf("❌ Could not load history ID from Firestore: %v", err)
+//		return fmt.Errorf("failed to load history ID: %w", err)
+//	}
+//
+//	historyCtx, historyCancel := context.WithTimeout(ctx, 30*time.Second)
+//	defer historyCancel()
+//
+//	if err := retrieveHistory(historyCtx, srv, previousHistoryID, fsClient); err != nil {
+//		if err == context.DeadlineExceeded {
+//			logger.Error.Printf("❌ History retrieval timed out after 30 seconds")
+//			return fmt.Errorf("history retrieval timeout: %w", err)
+//		}
+//		logger.Error.Printf("❌ Failed to retrieve history: %v", err)
+//		return fmt.Errorf("failed to retrieve history: %w", err)
+//	}
+//
+//	elapsed := time.Since(start)
+//	logger.Info.Printf("✅ PubSub request processed successfully in %v", elapsed)
+//
+//	if elapsed > 40*time.Second {
+//		logger.Warn.Printf("⚠️ Request processing took longer than expected: %v", elapsed)
+//	}
+//
+//	// ✅ Write success HTTP response
+//	w.Header().Set("Content-Type", "application/json")
+//	w.WriteHeader(http.StatusOK)
+//	_ = json.NewEncoder(w).Encode(map[string]string{
+//		"status": "ok",
+//	})
+//
+//	return nil
+//}
 
 func HistoryRetrieveHandler(w http.ResponseWriter, r *http.Request) {
 	logger.Info.Println("🔍 Manual history polling started")
