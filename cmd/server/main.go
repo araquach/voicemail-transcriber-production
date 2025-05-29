@@ -164,6 +164,13 @@ func main() {
 	})
 
 	http.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				logger.Error.Printf("🔥 Panic recovered in /notify: %v", rec)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		}()
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -188,7 +195,8 @@ func main() {
 			return
 		}
 
-		// ✅ Success response handled inside PubSubHandler
+		// ✅ If PubSubHandler succeeded and wrote response
+		logger.Info.Println("📬 PubSubHandler returned without error — success response already sent")
 	})
 
 	port := os.Getenv("PORT")
