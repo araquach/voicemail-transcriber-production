@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	gmailapi "google.golang.org/api/gmail/v1"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"voicemail-transcriber-production/internal/auth"
@@ -167,7 +169,27 @@ func main() {
 			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
 			return
 		}
-		gmail.PubSubHandler(w, r)
+
+		// Add CORS headers if needed
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := gmail.PubSubHandler(w, r); err != nil {
+			logger.Error.Printf("❌ PubSub handler error: %v", err)
+
+			switch {
+			case err.Error() == "app not ready: token not available yet":
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			case strings.Contains(err.Error(), "invalid"):
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			default:
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		// Write success response
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
 	port := os.Getenv("PORT")

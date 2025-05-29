@@ -56,37 +56,36 @@ func InitFirestoreHistory(ctx context.Context, srv *gmail.Service, fsClient *fir
 	return nil
 }
 
-func PubSubHandler(w http.ResponseWriter, r *http.Request) {
+func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
 	logger.Debug.Println("🐛 Entered PubSubHandler")
 
 	if !auth.IsTokenReady {
 		logger.Warn.Println("⚠️ Skipping Pub/Sub handling — token not ready")
-		http.Error(w, "App not ready: token not available yet", http.StatusServiceUnavailable)
-		return
+		return fmt.Errorf("app not ready: token not available yet")
+	}
+
+	if r.Method != http.MethodPost {
+		return fmt.Errorf("invalid method: %s", r.Method)
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.Error.Printf("❌ Failed to read body: %v", err)
-		http.Error(w, "Unable to read request", http.StatusBadRequest)
-		return
+		return fmt.Errorf("failed to read request body: %w", err)
 	}
 
 	logger.Debug.Printf("🐛 Raw body: %s", string(body))
 
 	var msg PubSubMessage
-	err = json.Unmarshal(body, &msg)
-	if err != nil {
+	if err = json.Unmarshal(body, &msg); err != nil {
 		logger.Error.Printf("❌ Failed to unmarshal PubSub message: %v", err)
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
+		return fmt.Errorf("invalid JSON: %w", err)
 	}
 
 	decodedData, err := base64.StdEncoding.DecodeString(msg.Message.Data)
 	if err != nil {
 		logger.Error.Printf("❌ Failed to decode message data: %v", err)
-		http.Error(w, "Invalid base64 data", http.StatusBadRequest)
-		return
+		return fmt.Errorf("invalid base64 data: %w", err)
 	}
 
 	logger.Debug.Printf("📨 Decoded Pub/Sub data: %s", decodedData)
@@ -95,39 +94,43 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) {
 		EmailAddress string `json:"emailAddress"`
 		HistoryId    uint64 `json:"historyId"`
 	}
-	err = json.Unmarshal(decodedData, &notificationData)
-	if err != nil {
+	if err = json.Unmarshal(decodedData, &notificationData); err != nil {
 		logger.Error.Printf("❌ Failed to unmarshal decoded data: %v", err)
-		http.Error(w, "Invalid message format", http.StatusBadRequest)
-		return
+		return fmt.Errorf("invalid message format: %w", err)
 	}
 
 	ctx := context.Background()
 
-	// ✅ Use centralised auth
-	srv, err := auth.LoadGmailService(ctx)
-	if err != nil {
-		logger.Error.Printf("❌ Unable to create Gmail service: %v", err)
-		http.Error(w, "Failed to create Gmail service", http.StatusInternalServerError)
-		return
-	}
-
+	// Create Firestore client
 	fsClient, err := firestore.NewClient(ctx, os.Getenv("GCP_PROJECT_ID"))
 	if err != nil {
-		logger.Error.Fatalf("❌ Failed to create Firestore client: %v", err)
+		logger.Error.Printf("❌ Failed to create Firestore client: %v", err)
+		return fmt.Errorf("failed to create Firestore client: %w", err)
 	}
 	defer fsClient.Close()
 
-	logger.Info.Printf("📩 Received Pub/Sub notification for: %s (History ID: %d)", notificationData.EmailAddress, notificationData.HistoryId)
+	// Use existing Gmail service instead of creating new one
+	srv, err := auth.LoadGmailService(ctx)
+	if err != nil {
+		logger.Error.Printf("❌ Unable to create Gmail service: %v", err)
+		return fmt.Errorf("failed to create Gmail service: %w", err)
+	}
+
+	logger.Info.Printf("📩 Received Pub/Sub notification for: %s (History ID: %d)",
+		notificationData.EmailAddress, notificationData.HistoryId)
 
 	previousHistoryID, err := LoadHistoryIDFromFirestore(ctx, fsClient)
 	if err != nil {
-		logger.Error.Fatalf("❌ Could not load history ID from Firestore: %v", err)
+		logger.Error.Printf("❌ Could not load history ID from Firestore: %v", err)
+		return fmt.Errorf("failed to load history ID: %w", err)
 	}
 
-	retrieveHistory(ctx, srv, previousHistoryID, fsClient)
+	if err := retrieveHistory(ctx, srv, previousHistoryID, fsClient); err != nil {
+		logger.Error.Printf("❌ Failed to retrieve history: %v", err)
+		return fmt.Errorf("failed to retrieve history: %w", err)
+	}
 
-	w.WriteHeader(http.StatusOK)
+	return nil
 }
 
 func HistoryRetrieveHandler(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +166,7 @@ func HistoryRetrieveHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "✅ History polling complete. Check logs for details.")
 }
 
-func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uint64, fsClient *firestore.Client) {
+func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uint64, fsClient *firestore.Client) error {
 	req := srv.Users.History.List("me").
 		StartHistoryId(startHistoryID).
 		HistoryTypes("messageAdded")
@@ -174,13 +177,13 @@ func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uin
 			return nil
 		}
 
-		logger.Info.Printf("🔍 Retrieved %d history records", len(resp.History)) // ✅ Here
+		logger.Info.Printf("🔍 Retrieved %d history records", len(resp.History))
 
 		for _, h := range resp.History {
 			for _, m := range h.MessagesAdded {
 				if m.Message != nil {
 					msgID := m.Message.Id
-					logger.Info.Printf("📨 Found message: ID=%s", msgID) // ✅ Here
+					logger.Info.Printf("📨 Found message: ID=%s", msgID)
 
 					if processedMessages[msgID] {
 						logger.Debug.Printf("⚠️ Skipping already processed message: %s", msgID)
@@ -195,17 +198,14 @@ func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uin
 					}
 
 					from := GetHeader(msg.Payload.Headers, "From")
-					logger.Debug.Printf("✉️ From: %s", from) // ✅ Here
+					logger.Debug.Printf("✉️ From: %s", from)
 
 					parsed, err := mail.ParseAddress(from)
 					if err != nil {
 						logger.Error.Printf("Failed to parse From header: %v", err)
 						continue
 					}
-					//if parsed.Address != "noreply@btonephone.com" {
-					//	logger.Debug.Printf("⏭️ Skipping message from %s", parsed.Address)
-					//	continue
-					//}
+
 					if parsed.Address != "araquach@yahoo.co.uk" {
 						logger.Debug.Printf("⏭️ Skipping message from %s", parsed.Address)
 						continue
@@ -215,14 +215,14 @@ func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uin
 						if part.Filename != "" && part.Body.AttachmentId != "" {
 							filePath, err := SaveAttachment(srv, "me", msg.Id, part, "/tmp")
 							if err != nil {
-								logger.Error.Println(err)
+								logger.Error.Printf("Failed to save attachment: %v", err)
 								continue
 							}
 
 							subject := GetHeader(msg.Payload.Headers, "Subject")
 							err = transcriber.TranscribeAndRespond(ctx, filePath, srv, subject)
 							if err != nil {
-								logger.Error.Println(err)
+								logger.Error.Printf("Failed to transcribe and respond: %v", err)
 							}
 
 							os.Remove(filePath)
@@ -235,7 +235,7 @@ func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uin
 
 		if resp.HistoryId != 0 {
 			if err := SaveHistoryIDToFirestore(ctx, fsClient, resp.HistoryId); err != nil {
-				logger.Error.Printf("Failed to save updated history ID to Firestore: %v", err)
+				return fmt.Errorf("failed to save updated history ID to Firestore: %w", err)
 			}
 		}
 
@@ -243,6 +243,8 @@ func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uin
 	})
 
 	if err != nil {
-		logger.Error.Printf("History retrieval error: %v", err)
+		return fmt.Errorf("history retrieval error: %w", err)
 	}
+
+	return nil
 }
