@@ -1,33 +1,39 @@
-# Build stage
-FROM golang:1.22-alpine AS builder
+# Builder stage using Go 1.23
+FROM golang:1.23 AS builder
 
-# Add CA certificates and necessary tools
-RUN apk --no-cache add ca-certificates git
+# Set the working directory inside the builder stage
+WORKDIR /build
 
-WORKDIR /app
-
-# Leverage caching for go.mod dependencies first
+# Copy package files first (to leverage Docker cache)
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the full source code
+# Now copy the full source code into the builder image
 COPY . .
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o voicemail-transcriber ./cmd
+# Build the Go application targeting Linux (explicitly for amd64 to address potential platform differences)
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /build/server ./cmd/server
 
-# Final runtime stage
-FROM scratch
+# Verify the binary was built successfully during the builder phase
+RUN echo "DEBUG: Builder binary check:" && ls -l /build/server
 
-# Import the compiled Go binary and CA certificates
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /app/voicemail-transcriber /voicemail-transcriber
+# Runtime stage using a minimal Linux distribution
+FROM debian:bullseye-slim
 
-# Set a non-root user (optional but recommended)
-USER 1001:1001
+# Install CA certificates (for cloud libraries or similar HTTPS requirements)
+RUN apt-get update -y && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
-# Set execution entry
-ENTRYPOINT ["/voicemail-transcriber"]
+# Set the working directory in the runtime stage
+WORKDIR /app
 
-# Expose the port used by your Go app
-EXPOSE 8080
+# Copy the binary from the builder stage to the runtime image
+COPY --from=builder /build/server /app/server
+
+# Ensure the binary is executable
+RUN chmod +x /app/server
+
+# Verify the runtime binary exists and is executable
+RUN echo "DEBUG: Runtime binary check:" && ls -l /app/server
+
+# Command or entrypoint to run the Go service
+CMD ["/app/server"]
