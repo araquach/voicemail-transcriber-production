@@ -61,7 +61,6 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
 	start := time.Now()
 	logger.Info.Printf("📨 Received PubSub request from: %s", r.RemoteAddr)
 
-	// Create a context with timeout
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 
@@ -105,7 +104,6 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("invalid message format: %w", err)
 	}
 
-	// Create Firestore client with timeout context
 	fsClient, err := firestore.NewClient(ctx, os.Getenv("GCP_PROJECT_ID"))
 	if err != nil {
 		logger.Error.Printf("❌ Failed to create Firestore client: %v", err)
@@ -117,7 +115,6 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
 		}
 	}()
 
-	// Use existing Gmail service
 	srv, err := auth.LoadGmailService(ctx)
 	if err != nil {
 		logger.Error.Printf("❌ Unable to create Gmail service: %v", err)
@@ -127,7 +124,6 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
 	logger.Info.Printf("📩 Processing Pub/Sub notification for: %s (History ID: %d)",
 		notificationData.EmailAddress, notificationData.HistoryId)
 
-	// Check context before proceeding
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context error before history processing: %w", err)
 	}
@@ -138,7 +134,6 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to load history ID: %w", err)
 	}
 
-	// Create a separate context with reduced timeout for history retrieval
 	historyCtx, historyCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer historyCancel()
 
@@ -154,10 +149,16 @@ func PubSubHandler(w http.ResponseWriter, r *http.Request) error {
 	elapsed := time.Since(start)
 	logger.Info.Printf("✅ PubSub request processed successfully in %v", elapsed)
 
-	// Return early if we're getting close to the timeout
 	if elapsed > 40*time.Second {
 		logger.Warn.Printf("⚠️ Request processing took longer than expected: %v", elapsed)
 	}
+
+	// ✅ Write success HTTP response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	})
 
 	return nil
 }

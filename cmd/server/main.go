@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	gmailapi "google.golang.org/api/gmail/v1"
 	"net/http"
@@ -165,34 +164,23 @@ func main() {
 	})
 
 	http.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-
-		if !state.isReady() {
-			logger.Warn.Printf("Service not ready, received request from: %s", r.RemoteAddr)
-			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
-			return
-		}
-
-		// Add CORS headers if needed
-		w.Header().Set("Content-Type", "application/json")
-
-		// Add basic request logging
-		logger.Info.Printf("Received notify request from: %s, method: %s", r.RemoteAddr, r.Method)
-
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		if err := gmail.PubSubHandler(w, r); err != nil {
-			logger.Error.Printf("❌ PubSub handler error: %v", err)
+		logger.Info.Printf("📬 /notify invoked from: %s", r.RemoteAddr)
+
+		err := gmail.PubSubHandler(w, r)
+		if err != nil {
+			logger.Error.Printf("❌ PubSubHandler error: %v", err)
 
 			switch {
 			case err.Error() == "app not ready: token not available yet":
 				http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			case strings.Contains(err.Error(), "invalid"):
 				http.Error(w, err.Error(), http.StatusBadRequest)
-			case strings.Contains(err.Error(), "deadline exceeded"):
+			case strings.Contains(err.Error(), "timeout"):
 				http.Error(w, "Request timeout", http.StatusGatewayTimeout)
 			default:
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -200,14 +188,7 @@ func main() {
 			return
 		}
 
-		// Write success response
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{
-			"status": "ok",
-			"time":   time.Since(start).String(),
-		})
-
-		logger.Info.Printf("✅ Notify request processed in %v", time.Since(start))
+		// ✅ Success response handled inside PubSubHandler
 	})
 
 	port := os.Getenv("PORT")
