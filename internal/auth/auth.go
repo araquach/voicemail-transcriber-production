@@ -22,7 +22,7 @@ func LoadGmailService(ctx context.Context) (*gmail.Service, error) {
 	logger.Info.Printf("🔍 Debug: Starting Gmail service initialization for: %s", userToImpersonate)
 
 	// Load service account credentials
-	credBytes, err := secret.LoadSecret(ctx, "gmail-service-account")
+	credBytes, err := secret.LoadSecret(ctx, "gmail-token-json")
 	if err != nil {
 		logger.Error.Printf("❌ Debug: Failed to load service account credentials: %v", err)
 		return nil, fmt.Errorf("failed to load service account credentials: %w", err)
