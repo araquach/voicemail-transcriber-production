@@ -28,6 +28,6 @@ steps:
       '--timeout=300s',
       '--min-instances=1',
       '--port=8080',
-      '--use-http2',
       '--set-env-vars=GCP_PROJECT_ID=voicemail-transcribe-454814,PUBSUB_TOPIC_NAME=projects/voicemail-transcribe-454814/topics/gmail-notifications,EMAIL_RESPONSE_ADDRESS=booking@jakatasalon.co.uk'
     ]
+
