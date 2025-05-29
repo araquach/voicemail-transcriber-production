@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	gmailapi "google.golang.org/api/gmail/v1"
-	"io"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 	"voicemail-transcriber-production/internal/auth"
@@ -165,6 +162,50 @@ func main() {
 		fmt.Fprintln(w, "✅ Gmail watch successfully re-established!")
 	})
 
+	//http.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
+	//	defer func() {
+	//		if rec := recover(); rec != nil {
+	//			logger.Error.Printf("🔥 Panic recovered in /notify: %v", rec)
+	//			http.Error(w, "Internal server error", http.StatusInternalServerError)
+	//		}
+	//	}()
+	//
+	//	if r.Method != http.MethodPost {
+	//		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	//		return
+	//	}
+	//
+	//	logger.Info.Printf("📬 /notify invoked from: %s", r.RemoteAddr)
+	//
+	//	// 🕵️ Log the raw request body
+	//	body, _ := io.ReadAll(r.Body)
+	//	logger.Info.Printf("📨 Raw /notify body: %s", string(body))
+	//
+	//	// 🔁 Reuse body for PubSubHandler
+	//	r.Body = io.NopCloser(bytes.NewReader(body))
+	//
+	//	logger.Info.Println("🔍 About to call gmail.PubSubHandler")
+	//
+	//	err := gmail.PubSubHandler(w, r)
+	//	if err != nil {
+	//		logger.Error.Printf("❌ PubSubHandler error: %v", err)
+	//
+	//		switch {
+	//		case err.Error() == "app not ready: token not available yet":
+	//			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	//		case strings.Contains(err.Error(), "invalid"):
+	//			http.Error(w, err.Error(), http.StatusBadRequest)
+	//		case strings.Contains(err.Error(), "timeout"):
+	//			http.Error(w, "Request timeout", http.StatusGatewayTimeout)
+	//		default:
+	//			http.Error(w, "Internal server error", http.StatusInternalServerError)
+	//		}
+	//		return
+	//	}
+	//
+	//	logger.Info.Println("📬 PubSubHandler returned without error — success response already sent")
+	//})
+
 	http.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -173,40 +214,19 @@ func main() {
 			}
 		}()
 
+		logger.Info.Println("🔥 Entered /notify handler — top")
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		logger.Info.Printf("📬 /notify invoked from: %s", r.RemoteAddr)
+		// ✅ Confirm the handler is being hit
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"early-ok"}`))
+		return
 
-		// 🕵️ Log the raw request body
-		body, _ := io.ReadAll(r.Body)
-		logger.Info.Printf("📨 Raw /notify body: %s", string(body))
-
-		// 🔁 Reuse body for PubSubHandler
-		r.Body = io.NopCloser(bytes.NewReader(body))
-
-		logger.Info.Println("🔍 About to call gmail.PubSubHandler")
-
-		err := gmail.PubSubHandler(w, r)
-		if err != nil {
-			logger.Error.Printf("❌ PubSubHandler error: %v", err)
-
-			switch {
-			case err.Error() == "app not ready: token not available yet":
-				http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			case strings.Contains(err.Error(), "invalid"):
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			case strings.Contains(err.Error(), "timeout"):
-				http.Error(w, "Request timeout", http.StatusGatewayTimeout)
-			default:
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-			}
-			return
-		}
-
-		logger.Info.Println("📬 PubSubHandler returned without error — success response already sent")
+		// The rest is temporarily bypassed
 	})
 
 	port := os.Getenv("PORT")
