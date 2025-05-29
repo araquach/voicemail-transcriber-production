@@ -46,7 +46,7 @@ Thumbs.db
 
 # Config-generated files
 .env
-.env.*
+.env
 
 # Exclude any local private credentials
 *.key
