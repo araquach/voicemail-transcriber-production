@@ -165,13 +165,24 @@ func main() {
 	})
 
 	http.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
 		if !state.isReady() {
+			logger.Warn.Printf("Service not ready, received request from: %s", r.RemoteAddr)
 			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
 			return
 		}
 
 		// Add CORS headers if needed
 		w.Header().Set("Content-Type", "application/json")
+
+		// Add basic request logging
+		logger.Info.Printf("Received notify request from: %s, method: %s", r.RemoteAddr, r.Method)
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 
 		if err := gmail.PubSubHandler(w, r); err != nil {
 			logger.Error.Printf("❌ PubSub handler error: %v", err)
@@ -181,6 +192,8 @@ func main() {
 				http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			case strings.Contains(err.Error(), "invalid"):
 				http.Error(w, err.Error(), http.StatusBadRequest)
+			case strings.Contains(err.Error(), "deadline exceeded"):
+				http.Error(w, "Request timeout", http.StatusGatewayTimeout)
 			default:
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 			}
@@ -189,7 +202,12 @@ func main() {
 
 		// Write success response
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "ok",
+			"time":   time.Since(start).String(),
+		})
+
+		logger.Info.Printf("✅ Notify request processed in %v", time.Since(start))
 	})
 
 	port := os.Getenv("PORT")
@@ -200,8 +218,9 @@ func main() {
 	srv := &http.Server{
 		Addr:           "0.0.0.0:" + port,
 		Handler:        nil,
-		ReadTimeout:    15 * time.Second,
-		WriteTimeout:   15 * time.Second,
+		ReadTimeout:    60 * time.Second,  // Increased from 15
+		WriteTimeout:   60 * time.Second,  // Increased from 15
+		IdleTimeout:    120 * time.Second, // Added idle timeout
 		MaxHeaderBytes: 1 << 20,
 	}
 
