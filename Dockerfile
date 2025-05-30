@@ -39,4 +39,4 @@ ENTRYPOINT ["/app/server"]
 CMD ["--port=8080"]
 
 # Command or entrypoint to run the Go service
-CMD ["/app/server"]
+ENTRYPOINT ["/app/server"]
