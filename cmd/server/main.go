@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -44,46 +45,54 @@ func NewFirestoreClient(ctx context.Context) (*firestore.Client, error) {
 	return firestore.NewClient(ctx, projectID)
 }
 
-type responseWriter struct {
-	http.ResponseWriter
-	status int
-}
+func handlePubSubRequest(w http.ResponseWriter, r *http.Request, state *AppState) {
+	if !state.isReady() {
+		http.Error(w, "Service initializing", http.StatusServiceUnavailable)
+		return
+	}
 
-func (rw *responseWriter) WriteHeader(code int) {
-	rw.status = code
-	rw.ResponseWriter.WriteHeader(code)
-}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Error.Printf("❌ Failed to read request body: %v", err)
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
 
-func loggingMiddleware(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
+	if len(body) == 0 {
+		logger.Warn.Printf("⚠️ Empty request body received")
+		http.Error(w, "Empty request body", http.StatusBadRequest)
+		return
+	}
 
-		logger.Info.Printf("📥 Incoming request: %s %s", r.Method, r.URL.Path)
-		logger.Info.Printf("Headers: %+v", r.Header)
-		logger.Info.Printf("Proto: %s (Major: %d, Minor: %d)",
-			r.Proto, r.ProtoMajor, r.ProtoMinor)
-		logger.Info.Printf("X-Forwarded-Proto: %s", r.Header.Get("X-Forwarded-Proto"))
+	logger.Info.Printf("📨 Processing PubSub request with body length: %d bytes", len(body))
+	err = gmail.PubSubHandler(w, r)
+	if err != nil {
+		logger.Error.Printf("❌ PubSubHandler error: %v", err)
+		switch {
+		case strings.Contains(err.Error(), "not ready"):
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		case strings.Contains(err.Error(), "invalid"):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		default:
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
 
-		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
-		handler.ServeHTTP(rw, r)
-
-		duration := time.Since(start)
-		logger.Info.Printf("📤 Response: %d %s (%v)",
-			rw.status, http.StatusText(rw.status), duration)
-	})
+	logger.Info.Printf("✅ Successfully processed PubSub request")
 }
 
 func main() {
 	logger.Init()
 	logger.Info.Println("🚀 Starting voicemail transcriber service...")
-	logger.PrintEnvSummary()
 
 	state := &AppState{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Initialize services in a goroutine
+	// Initialize services
 	go func() {
 		var err error
 		state.srv, err = auth.LoadGmailService(ctx)
@@ -124,38 +133,45 @@ func main() {
 	// Debug endpoint
 	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
 		info := map[string]interface{}{
-			"protocol":       r.Proto,
-			"protocolMajor":  r.ProtoMajor,
-			"protocolMinor":  r.ProtoMinor,
-			"headers":        r.Header,
-			"remote":         r.RemoteAddr,
-			"host":           r.Host,
-			"method":         r.Method,
-			"path":           r.URL.Path,
-			"forwardedProto": r.Header.Get("X-Forwarded-Proto"),
-			"serverTime":     time.Now().Format(time.RFC3339),
-			"ready":          state.isReady(),
+			"ready":        state.isReady(),
+			"serverTime":   time.Now().Format(time.RFC3339),
+			"buildVersion": os.Getenv("BUILD_VERSION"),
+			"request": map[string]interface{}{
+				"method":        r.Method,
+				"uri":           r.RequestURI,
+				"proto":         r.Proto,
+				"contentLength": r.ContentLength,
+				"contentType":   r.Header.Get("Content-Type"),
+				"remoteAddr":    r.RemoteAddr,
+				"headers":       r.Header,
+			},
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
 	})
 
-	// Notify endpoint
+	// Main notify endpoint
 	mux.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
+		// Log request details
+		logger.Info.Printf("📥 Request: %s %s (Proto: %s)", r.Method, r.URL.Path, r.Proto)
+
 		// Handle HTTP/2 connection preface
 		if r.Method == "PRI" && r.RequestURI == "*" && r.Proto == "HTTP/2.0" {
-			logger.Info.Printf("🔄 Received HTTP/2 connection preface")
+			logger.Info.Printf("🔄 HTTP/2 connection preface received")
+			w.Header().Set("Content-Length", "0")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		if !state.isReady() {
-			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
+		// Enforce POST method
+		if r.Method != http.MethodPost {
+			logger.Warn.Printf("⚠️ Invalid method: %s", r.Method)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// Check content type for PubSub messages
+		// Verify content type
 		contentType := r.Header.Get("Content-Type")
 		if !strings.Contains(contentType, "application/json") {
 			logger.Warn.Printf("⚠️ Invalid content type: %s", contentType)
@@ -163,18 +179,7 @@ func main() {
 			return
 		}
 
-		err := gmail.PubSubHandler(w, r)
-		if err != nil {
-			logger.Error.Printf("❌ PubSubHandler error: %v", err)
-			switch {
-			case strings.Contains(err.Error(), "not ready"):
-				http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			case strings.Contains(err.Error(), "invalid"):
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			default:
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-			}
-		}
+		handlePubSubRequest(w, r, state)
 	})
 
 	// Manual history retrieval endpoint
@@ -185,22 +190,23 @@ func main() {
 		port = "8080"
 	}
 
-	// Create server with HTTP/2 support
 	srv := &http.Server{
 		Addr: fmt.Sprintf("0.0.0.0:%s", port),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Handle HTTP/2 connection preface
-			if r.Method == "PRI" && r.RequestURI == "*" && r.Proto == "HTTP/2.0" {
-				logger.Info.Printf("🔄 HTTP/2 connection preface received")
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-
-			// Add security headers
+			// Set security headers
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("X-Frame-Options", "DENY")
 
-			loggingMiddleware(mux).ServeHTTP(w, r)
+			// Log request start
+			start := time.Now()
+			logger.Info.Printf("👉 Request started: %s %s", r.Method, r.URL.Path)
+
+			// Handle request
+			mux.ServeHTTP(w, r)
+
+			// Log request completion
+			duration := time.Since(start)
+			logger.Info.Printf("👈 Request completed in %v", duration)
 		}),
 		ReadTimeout:    60 * time.Second,
 		WriteTimeout:   60 * time.Second,
@@ -208,7 +214,7 @@ func main() {
 		MaxHeaderBytes: 1 << 20,
 	}
 
-	logger.Info.Printf("🚀 Server starting on %s", srv.Addr)
+	logger.Info.Printf("🚀 Server starting on port %s", port)
 	logger.Info.Printf("🌐 Build Version: %s", os.Getenv("BUILD_VERSION"))
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
