@@ -17,6 +17,8 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/google/uuid"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	gmailapi "google.golang.org/api/gmail/v1"
 )
 
@@ -47,13 +49,8 @@ func NewFirestoreClient(ctx context.Context) (*firestore.Client, error) {
 	return firestore.NewClient(ctx, projectID)
 }
 
-func handleRequest(w http.ResponseWriter, r *http.Request, state *AppState, reqID string) {
-	if r.Method == "PRI" && r.RequestURI == "*" && r.Proto == "HTTP/2.0" {
-		logger.Info.Printf("[%s] 🔄 HTTP/2 preface received", reqID)
-		w.Header().Set("Content-Length", "0")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
+func handleNotify(w http.ResponseWriter, r *http.Request, state *AppState, reqID string) {
+	logger.Info.Printf("[%s] 📥 Handling notify request: %s %s", reqID, r.Method, r.URL.Path)
 
 	if r.Method != http.MethodPost {
 		logger.Warn.Printf("[%s] ⚠️ Invalid method: %s", reqID, r.Method)
@@ -65,6 +62,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request, state *AppState, reqI
 	if !strings.Contains(contentType, "application/json") {
 		logger.Warn.Printf("[%s] ⚠️ Invalid content type: %s", reqID, contentType)
 		http.Error(w, "Invalid content type", http.StatusBadRequest)
+		return
+	}
+
+	if !state.isReady() {
+		logger.Warn.Printf("[%s] ⚠️ Service not ready", reqID)
+		http.Error(w, "Service initializing", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -85,13 +88,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request, state *AppState, reqI
 		return
 	}
 
-	logger.Info.Printf("[%s] 📦 Processing request with %d bytes", reqID, len(body))
-
-	if !state.isReady() {
-		logger.Warn.Printf("[%s] ⚠️ Service not ready", reqID)
-		http.Error(w, "Service initializing", http.StatusServiceUnavailable)
-		return
-	}
+	logger.Info.Printf("[%s] 📦 Processing request body: %d bytes", reqID, len(body))
 
 	newReq := r.Clone(r.Context())
 	newReq.Body = io.NopCloser(bytes.NewReader(body))
@@ -122,7 +119,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Initialize services
 	go func() {
 		var err error
 		state.srv, err = auth.LoadGmailService(ctx)
@@ -150,13 +146,13 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if state.isReady() {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-		} else {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{"status": "initializing"})
+		status := map[string]interface{}{
+			"status": "ok",
+			"ready":  state.isReady(),
+			"time":   time.Now().Format(time.RFC3339),
 		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(status)
 	})
 
 	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
@@ -180,8 +176,7 @@ func main() {
 
 	mux.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
 		reqID := uuid.New().String()[:8]
-		logger.Info.Printf("[%s] 📥 %s %s (Proto: %s)", reqID, r.Method, r.URL.Path, r.Proto)
-		handleRequest(w, r, state, reqID)
+		handleNotify(w, r, state, reqID)
 	})
 
 	mux.HandleFunc("/history", gmail.HistoryRetrieveHandler)
@@ -191,30 +186,35 @@ func main() {
 		port = "8080"
 	}
 
-	srv := &http.Server{
-		Addr: fmt.Sprintf("0.0.0.0:%s", port),
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			reqID := uuid.New().String()[:8]
-			start := time.Now()
+	h2s := &http2.Server{
+		IdleTimeout: 120 * time.Second,
+	}
 
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("X-Frame-Options", "DENY")
-			w.Header().Set("X-Request-ID", reqID)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID := uuid.New().String()[:8]
+		start := time.Now()
 
-			logger.Info.Printf("[%s] 👉 Request started: %s %s", reqID, r.Method, r.URL.Path)
-			mux.ServeHTTP(w, r)
-			logger.Info.Printf("[%s] 👈 Request completed in %v", reqID, time.Since(start))
-		}),
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Request-ID", reqID)
+
+		logger.Info.Printf("[%s] 👉 Request started: %s %s %s", reqID, r.Method, r.URL.Path, r.Proto)
+		mux.ServeHTTP(w, r)
+		logger.Info.Printf("[%s] 👈 Request completed in %v", reqID, time.Since(start))
+	})
+
+	server := &http.Server{
+		Addr:           fmt.Sprintf("0.0.0.0:%s", port),
+		Handler:        h2c.NewHandler(handler, h2s),
 		ReadTimeout:    60 * time.Second,
 		WriteTimeout:   60 * time.Second,
-		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 
 	logger.Info.Printf("🚀 Server starting on port %s", port)
 	logger.Info.Printf("🌐 Build Version: %s", os.Getenv("BUILD_VERSION"))
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error.Fatalf("❌ Server failed to start: %v", err)
 	}
 }
