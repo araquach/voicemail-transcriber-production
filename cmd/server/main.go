@@ -1,4 +1,3 @@
-
 package main
 
 import (
@@ -18,9 +17,9 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/google/uuid"
-	gmailapi "google.golang.org/api/gmail/v1"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	gmailapi "google.golang.org/api/gmail/v1"
 )
 
 type AppState struct {
@@ -139,9 +138,13 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		status := "initializing"
+		if state.isReady() {
+			status = "ok"
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": state.isReady() ? "ok" : "initializing",
+			"status": status,
 			"time":   time.Now().Format(time.RFC3339),
 		})
 	})
@@ -150,12 +153,12 @@ func main() {
 		reqID := uuid.New().String()[:8]
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":            reqID,
-			"ready":         state.isReady(),
-			"timestamp":     time.Now().Format(time.RFC3339),
+			"id":           reqID,
+			"ready":        state.isReady(),
+			"timestamp":    time.Now().Format(time.RFC3339),
 			"buildVersion": os.Getenv("BUILD_VERSION"),
 			"request": map[string]interface{}{
-				"method":      r.Method,
+				"method":     r.Method,
 				"uri":        r.RequestURI,
 				"proto":      r.Proto,
 				"headers":    r.Header,
