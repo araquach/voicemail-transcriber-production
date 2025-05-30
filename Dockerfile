@@ -35,5 +35,8 @@ RUN chmod +x /app/server
 # Verify the runtime binary exists and is executable
 RUN echo "DEBUG: Runtime binary check:" && ls -l /app/server
 
+ARG BUILD_VERSION
+ENV BUILD_VERSION=$BUILD_VERSION
+
 # Command or entrypoint to run the Go service
-CMD ["/app/server"]
+ENTRYPOINT ["/app/server"]

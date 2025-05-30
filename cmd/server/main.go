@@ -244,6 +244,7 @@ func main() {
 	}
 
 	logger.Info.Printf("🚀 Listening on 0.0.0.0:%s...", port)
+	logger.Info.Println("🧭 Running build version:", os.Getenv("BUILD_VERSION"))
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Error.Fatalf("❌ Server failed to start: %v", err)
 	}
