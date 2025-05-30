@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	gmailapi "google.golang.org/api/gmail/v1"
+	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"voicemail-transcriber-production/internal/auth"
@@ -214,25 +217,41 @@ func main() {
 			}
 		}()
 
-		logger.Info.Println("🔥 Entered /notify handler — top")
+		logger.Info.Println("🔥 Entered /notify handler")
 
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// ✅ Confirm the handler is being hit
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"early-ok"}`))
-		return
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			logger.Error.Printf("❌ Failed reading body: %v", err)
+		} else {
+			logger.Info.Printf("📨 Raw /notify body: %s", string(body))
+		}
 
-		// The rest is temporarily bypassed
+		r.Body = io.NopCloser(bytes.NewReader(body))
+
+		err = gmail.PubSubHandler(w, r)
+		if err != nil {
+			logger.Error.Printf("❌ PubSubHandler error: %v", err)
+
+			switch {
+			case err.Error() == "app not ready: token not available yet":
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			case strings.Contains(err.Error(), "invalid"):
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			case strings.Contains(err.Error(), "timeout"):
+				http.Error(w, "Request timeout", http.StatusGatewayTimeout)
+			default:
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		logger.Info.Println("📬 PubSubHandler returned without error — success response already sent")
 	})
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
 
 	srv := &http.Server{
 		Addr:           "0.0.0.0:" + port,
