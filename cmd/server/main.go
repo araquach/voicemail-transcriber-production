@@ -133,14 +133,23 @@ func main() {
 		logger.Info.Println("✅ Application initialization complete")
 	}()
 
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		logger.Info.Printf("🏓 Ping received from: %s", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "pong")
+	})
+
 	// Add this with other http.HandleFunc calls
-	http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
 		logger.Info.Println("🔍 Test endpoint called")
 		TestHandler(w, r)
 	})
 
 	// Health check endpoint
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if state.isReady() {
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, "OK")
@@ -151,7 +160,7 @@ func main() {
 	})
 
 	// Setup other endpoints
-	http.HandleFunc("/retrieve", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/retrieve", func(w http.ResponseWriter, r *http.Request) {
 		if !state.isReady() {
 			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
 			return
@@ -159,7 +168,7 @@ func main() {
 		gmail.HistoryRetrieveHandler(w, r)
 	})
 
-	http.HandleFunc("/setup-watch", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/setup-watch", func(w http.ResponseWriter, r *http.Request) {
 		if !state.isReady() {
 			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
 			return
@@ -172,7 +181,7 @@ func main() {
 		fmt.Fprintln(w, "✅ Gmail watch successfully re-established!")
 	})
 
-	http.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
 				logger.Error.Printf("🔥 Panic recovered in /notify: %v", rec)
@@ -223,7 +232,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:           "0.0.0.0:" + port,
-		Handler:        nil,
+		Handler:        mux,
 		ReadTimeout:    60 * time.Second,  // Increased from 15
 		WriteTimeout:   60 * time.Second,  // Increased from 15
 		IdleTimeout:    120 * time.Second, // Added idle timeout
