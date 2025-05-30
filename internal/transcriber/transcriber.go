@@ -109,7 +109,7 @@ func TranscribeAndRespond(ctx context.Context, audioPath string, gmailSrv *gmail
 
 	var msg bytes.Buffer
 	msg.WriteString(fmt.Sprintf("To: %s\r\n", emailTo))
-	msg.WriteString(fmt.Sprintf("Subject: 📞 Voicemail Transcription: %s\r\n", subject))
+	msg.WriteString(fmt.Sprintf("Subject: Voicemail Transcription: %s\r\n", subject))
 	msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	msg.WriteString("\r\n")
 	msg.WriteString(emailBody)

@@ -238,7 +238,7 @@ func retrieveHistory(ctx context.Context, srv *gmail.Service, startHistoryID uin
 						continue
 					}
 
-					if parsed.Address != "araquach@yahoo.co.uk" {
+					if parsed.Address != "noreply@btonephone.com" {
 						logger.Debug.Printf("⏭️ Skipping message from %s", parsed.Address)
 						continue
 					}
