@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -63,14 +62,16 @@ func loggingMiddleware(next http.Handler) http.Handler {
 
 		logger.Info.Printf("📥 Incoming request: %s %s", r.Method, r.URL.Path)
 		logger.Info.Printf("Headers: %+v", r.Header)
-		logger.Info.Printf("Proto: %s", r.Proto)
-		logger.Info.Printf("TLS: %v", r.TLS != nil)
+		logger.Info.Printf("Proto: %s (Major: %d, Minor: %d)",
+			r.Proto, r.ProtoMajor, r.ProtoMinor)
+		logger.Info.Printf("X-Forwarded-Proto: %s", r.Header.Get("X-Forwarded-Proto"))
 
 		rw := &responseWriter{ResponseWriter: w}
 		next.ServeHTTP(rw, r)
 
 		duration := time.Since(start)
-		logger.Info.Printf("📤 Response: %d %s (%v)", rw.status, http.StatusText(rw.status), duration)
+		logger.Info.Printf("📤 Response: %d %s (%v)",
+			rw.status, http.StatusText(rw.status), duration)
 	})
 }
 
@@ -114,13 +115,17 @@ func main() {
 	// Debug endpoint
 	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
 		info := map[string]interface{}{
-			"protocol": r.Proto,
-			"tls":      r.TLS != nil,
-			"headers":  r.Header,
-			"remote":   r.RemoteAddr,
-			"host":     r.Host,
-			"method":   r.Method,
-			"path":     r.URL.Path,
+			"protocol":       r.Proto,
+			"protocolMajor":  r.ProtoMajor,
+			"protocolMinor":  r.ProtoMinor,
+			"headers":        r.Header,
+			"remote":         r.RemoteAddr,
+			"host":           r.Host,
+			"method":         r.Method,
+			"path":           r.URL.Path,
+			"forwardedProto": r.Header.Get("X-Forwarded-Proto"),
+			"serverTime":     time.Now().Format(time.RFC3339),
+			"ready":          state.isReady(),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -145,6 +150,12 @@ func main() {
 			return
 		}
 
+		// Handle HTTP/2 connection preface
+		if r.ProtoMajor == 2 && r.Method == "PRI" {
+			logger.Info.Printf("🔄 Received HTTP/2 connection preface")
+			return
+		}
+
 		err := gmail.PubSubHandler(w, r)
 		if err != nil {
 			logger.Error.Printf("❌ PubSubHandler error: %v", err)
@@ -159,16 +170,6 @@ func main() {
 		}
 	})
 
-	// Other endpoints...
-	mux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
-		logger.Info.Printf("📝 Test handler called from: %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"status": "ok",
-			"time":   time.Now().Format(time.RFC3339),
-		})
-	})
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -177,14 +178,10 @@ func main() {
 	// Create connection state monitoring channel
 	connStateChan := make(chan http.ConnState, 100)
 
-	// Configure server with explicit TLS settings
+	// Configure server
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("0.0.0.0:%s", port),
-		Handler: loggingMiddleware(mux),
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			NextProtos: []string{"h2", "http/1.1"},
-		},
+		Addr:           fmt.Sprintf("0.0.0.0:%s", port),
+		Handler:        loggingMiddleware(mux),
 		ReadTimeout:    60 * time.Second,
 		WriteTimeout:   60 * time.Second,
 		IdleTimeout:    120 * time.Second,
@@ -211,14 +208,13 @@ func main() {
 	logger.Info.Printf("- Address: %s", srv.Addr)
 	logger.Info.Printf("- Read Timeout: %v", srv.ReadTimeout)
 	logger.Info.Printf("- Write Timeout: %v", srv.WriteTimeout)
-	logger.Info.Printf("- TLS Min Version: %v", tls.VersionTLS12)
 	logger.Info.Printf("- Registered Routes:")
 	WalkMuxPaths(mux)
 
 	logger.Info.Printf("🚀 Server starting on %s", srv.Addr)
 	logger.Info.Printf("🌐 Build Version: %s", os.Getenv("BUILD_VERSION"))
 
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error.Fatalf("❌ Server failed to start: %v", err)
 	}
 }
