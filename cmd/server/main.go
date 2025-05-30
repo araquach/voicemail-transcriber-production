@@ -253,6 +253,11 @@ func main() {
 		logger.Info.Println("📬 PubSubHandler returned without error — success response already sent")
 	})
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	srv := &http.Server{
 		Addr:           "0.0.0.0:" + port,
 		Handler:        nil,
