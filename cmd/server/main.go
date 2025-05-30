@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"voicemail-transcriber-production/internal/logger"
 
 	"cloud.google.com/go/firestore"
+	"github.com/google/uuid"
 	gmailapi "google.golang.org/api/gmail/v1"
 )
 
@@ -45,30 +47,58 @@ func NewFirestoreClient(ctx context.Context) (*firestore.Client, error) {
 	return firestore.NewClient(ctx, projectID)
 }
 
-func handlePubSubRequest(w http.ResponseWriter, r *http.Request, state *AppState) {
-	if !state.isReady() {
-		http.Error(w, "Service initializing", http.StatusServiceUnavailable)
+func handleRequest(w http.ResponseWriter, r *http.Request, state *AppState, reqID string) {
+	if r.Method == "PRI" && r.RequestURI == "*" && r.Proto == "HTTP/2.0" {
+		logger.Info.Printf("[%s] 🔄 HTTP/2 preface received", reqID)
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	if r.Method != http.MethodPost {
+		logger.Warn.Printf("[%s] ⚠️ Invalid method: %s", reqID, r.Method)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "application/json") {
+		logger.Warn.Printf("[%s] ⚠️ Invalid content type: %s", reqID, contentType)
+		http.Error(w, "Invalid content type", http.StatusBadRequest)
+		return
+	}
+
+	maxBodySize := int64(1 << 20) // 1 MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		logger.Error.Printf("❌ Failed to read request body: %v", err)
+		logger.Error.Printf("[%s] ❌ Failed to read body: %v", reqID, err)
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
 	if len(body) == 0 {
-		logger.Warn.Printf("⚠️ Empty request body received")
+		logger.Warn.Printf("[%s] ⚠️ Empty request body", reqID)
 		http.Error(w, "Empty request body", http.StatusBadRequest)
 		return
 	}
 
-	logger.Info.Printf("📨 Processing PubSub request with body length: %d bytes", len(body))
-	err = gmail.PubSubHandler(w, r)
+	logger.Info.Printf("[%s] 📦 Processing request with %d bytes", reqID, len(body))
+
+	if !state.isReady() {
+		logger.Warn.Printf("[%s] ⚠️ Service not ready", reqID)
+		http.Error(w, "Service initializing", http.StatusServiceUnavailable)
+		return
+	}
+
+	newReq := r.Clone(r.Context())
+	newReq.Body = io.NopCloser(bytes.NewReader(body))
+
+	err = gmail.PubSubHandler(w, newReq)
 	if err != nil {
-		logger.Error.Printf("❌ PubSubHandler error: %v", err)
+		logger.Error.Printf("[%s] ❌ PubSubHandler error: %v", reqID, err)
 		switch {
 		case strings.Contains(err.Error(), "not ready"):
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -80,7 +110,7 @@ func handlePubSubRequest(w http.ResponseWriter, r *http.Request, state *AppState
 		return
 	}
 
-	logger.Info.Printf("✅ Successfully processed PubSub request")
+	logger.Info.Printf("[%s] ✅ Request processed successfully", reqID)
 }
 
 func main() {
@@ -119,70 +149,41 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if state.isReady() {
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "OK")
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, "Initializing")
+			json.NewEncoder(w).Encode(map[string]string{"status": "initializing"})
 		}
 	})
 
-	// Debug endpoint
 	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
+		reqID := uuid.New().String()[:8]
 		info := map[string]interface{}{
+			"id":           reqID,
 			"ready":        state.isReady(),
-			"serverTime":   time.Now().Format(time.RFC3339),
+			"timestamp":    time.Now().Format(time.RFC3339),
 			"buildVersion": os.Getenv("BUILD_VERSION"),
 			"request": map[string]interface{}{
-				"method":        r.Method,
-				"uri":           r.RequestURI,
-				"proto":         r.Proto,
-				"contentLength": r.ContentLength,
-				"contentType":   r.Header.Get("Content-Type"),
-				"remoteAddr":    r.RemoteAddr,
-				"headers":       r.Header,
+				"method":     r.Method,
+				"uri":        r.RequestURI,
+				"proto":      r.Proto,
+				"headers":    r.Header,
+				"remoteAddr": r.RemoteAddr,
 			},
 		}
-
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
 	})
 
-	// Main notify endpoint
 	mux.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
-		// Log request details
-		logger.Info.Printf("📥 Request: %s %s (Proto: %s)", r.Method, r.URL.Path, r.Proto)
-
-		// Handle HTTP/2 connection preface
-		if r.Method == "PRI" && r.RequestURI == "*" && r.Proto == "HTTP/2.0" {
-			logger.Info.Printf("🔄 HTTP/2 connection preface received")
-			w.Header().Set("Content-Length", "0")
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Enforce POST method
-		if r.Method != http.MethodPost {
-			logger.Warn.Printf("⚠️ Invalid method: %s", r.Method)
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Verify content type
-		contentType := r.Header.Get("Content-Type")
-		if !strings.Contains(contentType, "application/json") {
-			logger.Warn.Printf("⚠️ Invalid content type: %s", contentType)
-			http.Error(w, "Invalid content type", http.StatusBadRequest)
-			return
-		}
-
-		handlePubSubRequest(w, r, state)
+		reqID := uuid.New().String()[:8]
+		logger.Info.Printf("[%s] 📥 %s %s (Proto: %s)", reqID, r.Method, r.URL.Path, r.Proto)
+		handleRequest(w, r, state, reqID)
 	})
 
-	// Manual history retrieval endpoint
 	mux.HandleFunc("/history", gmail.HistoryRetrieveHandler)
 
 	port := os.Getenv("PORT")
@@ -193,20 +194,16 @@ func main() {
 	srv := &http.Server{
 		Addr: fmt.Sprintf("0.0.0.0:%s", port),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Set security headers
+			reqID := uuid.New().String()[:8]
+			start := time.Now()
+
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("X-Request-ID", reqID)
 
-			// Log request start
-			start := time.Now()
-			logger.Info.Printf("👉 Request started: %s %s", r.Method, r.URL.Path)
-
-			// Handle request
+			logger.Info.Printf("[%s] 👉 Request started: %s %s", reqID, r.Method, r.URL.Path)
 			mux.ServeHTTP(w, r)
-
-			// Log request completion
-			duration := time.Since(start)
-			logger.Info.Printf("👈 Request completed in %v", duration)
+			logger.Info.Printf("[%s] 👈 Request completed in %v", reqID, time.Since(start))
 		}),
 		ReadTimeout:    60 * time.Second,
 		WriteTimeout:   60 * time.Second,
