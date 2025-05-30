@@ -1,3 +1,4 @@
+
 package main
 
 import (
@@ -17,9 +18,9 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/google/uuid"
+	gmailapi "google.golang.org/api/gmail/v1"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
-	gmailapi "google.golang.org/api/gmail/v1"
 )
 
 type AppState struct {
@@ -27,6 +28,33 @@ type AppState struct {
 	fsClient  *firestore.Client
 	ready     bool
 	readyLock sync.RWMutex
+	initOnce  sync.Once
+}
+
+func (s *AppState) initialize(ctx context.Context) error {
+	var initErr error
+	s.initOnce.Do(func() {
+		s.srv, initErr = auth.LoadGmailService(ctx)
+		if initErr != nil {
+			logger.Error.Printf("Failed to load Gmail service: %v", initErr)
+			return
+		}
+
+		s.fsClient, initErr = firestore.NewClient(ctx, os.Getenv("GCP_PROJECT_ID"))
+		if initErr != nil {
+			logger.Error.Printf("Failed to initialize Firestore client: %v", initErr)
+			return
+		}
+
+		if initErr = gmail.InitFirestoreHistory(ctx, s.srv, s.fsClient); initErr != nil {
+			logger.Error.Printf("❌ Failed to initialize Firestore history: %v", initErr)
+			return
+		}
+
+		s.setReady(true)
+		logger.Info.Println("✅ Application initialization complete")
+	})
+	return initErr
 }
 
 func (s *AppState) setReady(ready bool) {
@@ -41,16 +69,8 @@ func (s *AppState) isReady() bool {
 	return s.ready
 }
 
-func NewFirestoreClient(ctx context.Context) (*firestore.Client, error) {
-	projectID := os.Getenv("GCP_PROJECT_ID")
-	if projectID == "" {
-		return nil, fmt.Errorf("GCP_PROJECT_ID environment variable not set")
-	}
-	return firestore.NewClient(ctx, projectID)
-}
-
 func handleNotify(w http.ResponseWriter, r *http.Request, state *AppState, reqID string) {
-	logger.Info.Printf("[%s] 📥 Handling notify request: %s %s", reqID, r.Method, r.URL.Path)
+	logger.Info.Printf("[%s] 📥 Processing request: %s %s", reqID, r.Method, r.URL.Path)
 
 	if r.Method != http.MethodPost {
 		logger.Warn.Printf("[%s] ⚠️ Invalid method: %s", reqID, r.Method)
@@ -65,9 +85,10 @@ func handleNotify(w http.ResponseWriter, r *http.Request, state *AppState, reqID
 		return
 	}
 
-	if !state.isReady() {
-		logger.Warn.Printf("[%s] ⚠️ Service not ready", reqID)
-		http.Error(w, "Service initializing", http.StatusServiceUnavailable)
+	// Ensure service is initialized
+	if err := state.initialize(r.Context()); err != nil {
+		logger.Error.Printf("[%s] ❌ Service initialization failed: %v", reqID, err)
+		http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -93,9 +114,8 @@ func handleNotify(w http.ResponseWriter, r *http.Request, state *AppState, reqID
 	newReq := r.Clone(r.Context())
 	newReq.Body = io.NopCloser(bytes.NewReader(body))
 
-	err = gmail.PubSubHandler(w, newReq)
-	if err != nil {
-		logger.Error.Printf("[%s] ❌ PubSubHandler error: %v", reqID, err)
+	if err := gmail.PubSubHandler(w, newReq); err != nil {
+		logger.Error.Printf("[%s] ❌ Handler error: %v", reqID, err)
 		switch {
 		case strings.Contains(err.Error(), "not ready"):
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -116,62 +136,32 @@ func main() {
 
 	state := &AppState{}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	go func() {
-		var err error
-		state.srv, err = auth.LoadGmailService(ctx)
-		if err != nil {
-			logger.Error.Printf("Failed to load Gmail service: %v", err)
-			return
-		}
-
-		state.fsClient, err = NewFirestoreClient(ctx)
-		if err != nil {
-			logger.Error.Printf("Failed to initialize Firestore client: %v", err)
-			return
-		}
-
-		if err := gmail.InitFirestoreHistory(ctx, state.srv, state.fsClient); err != nil {
-			logger.Error.Printf("❌ Failed to initialize Firestore history: %v", err)
-		} else {
-			logger.Info.Println("✅ Firestore history initialized")
-		}
-
-		state.setReady(true)
-		logger.Info.Println("✅ Application initialization complete")
-	}()
-
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		status := map[string]interface{}{
-			"status": "ok",
-			"ready":  state.isReady(),
-			"time":   time.Now().Format(time.RFC3339),
-		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(status)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": state.isReady() ? "ok" : "initializing",
+			"time":   time.Now().Format(time.RFC3339),
+		})
 	})
 
 	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
 		reqID := uuid.New().String()[:8]
-		info := map[string]interface{}{
-			"id":           reqID,
-			"ready":        state.isReady(),
-			"timestamp":    time.Now().Format(time.RFC3339),
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":            reqID,
+			"ready":         state.isReady(),
+			"timestamp":     time.Now().Format(time.RFC3339),
 			"buildVersion": os.Getenv("BUILD_VERSION"),
 			"request": map[string]interface{}{
-				"method":     r.Method,
+				"method":      r.Method,
 				"uri":        r.RequestURI,
 				"proto":      r.Proto,
 				"headers":    r.Header,
 				"remoteAddr": r.RemoteAddr,
 			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(info)
+		})
 	})
 
 	mux.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +198,7 @@ func main() {
 		Handler:        h2c.NewHandler(handler, h2s),
 		ReadTimeout:    60 * time.Second,
 		WriteTimeout:   60 * time.Second,
+		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 
