@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -56,7 +54,7 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
+func loggingMiddleware(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -66,8 +64,8 @@ func loggingMiddleware(next http.Handler) http.Handler {
 			r.Proto, r.ProtoMajor, r.ProtoMinor)
 		logger.Info.Printf("X-Forwarded-Proto: %s", r.Header.Get("X-Forwarded-Proto"))
 
-		rw := &responseWriter{ResponseWriter: w}
-		next.ServeHTTP(rw, r)
+		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		handler.ServeHTTP(rw, r)
 
 		duration := time.Since(start)
 		logger.Info.Printf("📤 Response: %d %s (%v)",
@@ -112,6 +110,17 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Health check endpoint
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if state.isReady() {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "OK")
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, "Initializing")
+		}
+	})
+
 	// Debug endpoint
 	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
 		info := map[string]interface{}{
@@ -132,27 +141,25 @@ func main() {
 		json.NewEncoder(w).Encode(info)
 	})
 
-	// Health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if state.isReady() {
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "OK")
-		} else {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, "Initializing")
-		}
-	})
-
-	// Notify endpoint with enhanced error handling
+	// Notify endpoint
 	mux.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
+		// Handle HTTP/2 connection preface
+		if r.Method == "PRI" && r.RequestURI == "*" && r.Proto == "HTTP/2.0" {
+			logger.Info.Printf("🔄 Received HTTP/2 connection preface")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		if !state.isReady() {
 			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
 			return
 		}
 
-		// Handle HTTP/2 connection preface
-		if r.ProtoMajor == 2 && r.Method == "PRI" {
-			logger.Info.Printf("🔄 Received HTTP/2 connection preface")
+		// Check content type for PubSub messages
+		contentType := r.Header.Get("Content-Type")
+		if !strings.Contains(contentType, "application/json") {
+			logger.Warn.Printf("⚠️ Invalid content type: %s", contentType)
+			http.Error(w, "Invalid content type", http.StatusBadRequest)
 			return
 		}
 
@@ -170,62 +177,41 @@ func main() {
 		}
 	})
 
+	// Manual history retrieval endpoint
+	mux.HandleFunc("/history", gmail.HistoryRetrieveHandler)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// Create connection state monitoring channel
-	connStateChan := make(chan http.ConnState, 100)
-
-	// Configure server
+	// Create server with HTTP/2 support
 	srv := &http.Server{
-		Addr:           fmt.Sprintf("0.0.0.0:%s", port),
-		Handler:        loggingMiddleware(mux),
+		Addr: fmt.Sprintf("0.0.0.0:%s", port),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Handle HTTP/2 connection preface
+			if r.Method == "PRI" && r.RequestURI == "*" && r.Proto == "HTTP/2.0" {
+				logger.Info.Printf("🔄 HTTP/2 connection preface received")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			// Add security headers
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+
+			loggingMiddleware(mux).ServeHTTP(w, r)
+		}),
 		ReadTimeout:    60 * time.Second,
 		WriteTimeout:   60 * time.Second,
 		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 1 << 20,
-		ConnState: func(conn net.Conn, state http.ConnState) {
-			select {
-			case connStateChan <- state:
-				logger.Debug.Printf("Connection from %v changed to %v", conn.RemoteAddr(), state)
-			default:
-				logger.Warn.Printf("Connection state channel full, dropped state %v for %v", state, conn.RemoteAddr())
-			}
-		},
 	}
-
-	// Monitor connection states
-	go func() {
-		for state := range connStateChan {
-			logger.Info.Printf("🔌 Connection state changed to: %v", state)
-		}
-	}()
-
-	// Log server configuration
-	logger.Info.Printf("🔍 Server Configuration:")
-	logger.Info.Printf("- Address: %s", srv.Addr)
-	logger.Info.Printf("- Read Timeout: %v", srv.ReadTimeout)
-	logger.Info.Printf("- Write Timeout: %v", srv.WriteTimeout)
-	logger.Info.Printf("- Registered Routes:")
-	WalkMuxPaths(mux)
 
 	logger.Info.Printf("🚀 Server starting on %s", srv.Addr)
 	logger.Info.Printf("🌐 Build Version: %s", os.Getenv("BUILD_VERSION"))
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error.Fatalf("❌ Server failed to start: %v", err)
-	}
-}
-
-func WalkMuxPaths(mux *http.ServeMux) {
-	rv := reflect.ValueOf(mux).Elem()
-	rv = rv.FieldByName("m")
-
-	if rv.IsValid() {
-		for _, k := range rv.MapKeys() {
-			logger.Info.Printf("  - %s", k.String())
-		}
 	}
 }
