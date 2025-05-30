@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	gmailapi "google.golang.org/api/gmail/v1"
 	"io"
@@ -132,6 +133,12 @@ func main() {
 		logger.Info.Println("✅ Application initialization complete")
 	}()
 
+	// Add this with other http.HandleFunc calls
+	http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
+		logger.Info.Println("🔍 Test endpoint called")
+		TestHandler(w, r)
+	})
+
 	// Health check endpoint
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if state.isReady() {
@@ -228,4 +235,37 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Error.Fatalf("❌ Server failed to start: %v", err)
 	}
+}
+
+//Test Handler
+//This handler is used to test the server is running and responding to requests.
+
+func TestHandler(w http.ResponseWriter, r *http.Request) {
+	logger.Info.Printf("📝 Test handler called from: %s", r.RemoteAddr)
+
+	// Log request details
+	logger.Info.Printf("Method: %s", r.Method)
+	logger.Info.Printf("Headers: %+v", r.Header)
+
+	// Read and log body if present
+	if r.Body != nil {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			logger.Error.Printf("❌ Error reading body: %v", err)
+		} else {
+			logger.Info.Printf("Body: %s", string(body))
+		}
+		// Reset body for other handlers
+		r.Body = io.NopCloser(bytes.NewBuffer(body))
+	}
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	response := map[string]interface{}{
+		"status":    "ok",
+		"message":   "Test handler working",
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	json.NewEncoder(w).Encode(response)
 }
