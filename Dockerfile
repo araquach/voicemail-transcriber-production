@@ -37,6 +37,3 @@ RUN echo "DEBUG: Runtime binary check:" && ls -l /app/server
 
 ENTRYPOINT ["/app/server"]
 CMD ["--port=8080"]
-
-# Command or entrypoint to run the Go service
-ENTRYPOINT ["/app/server"]
