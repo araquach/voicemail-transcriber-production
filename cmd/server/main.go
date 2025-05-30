@@ -1,14 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	gmailapi "google.golang.org/api/gmail/v1"
-	"io"
+	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +17,7 @@ import (
 	"voicemail-transcriber-production/internal/logger"
 
 	"cloud.google.com/go/firestore"
+	gmailapi "google.golang.org/api/gmail/v1"
 )
 
 type AppState struct {
@@ -46,38 +47,31 @@ func NewFirestoreClient(ctx context.Context) (*firestore.Client, error) {
 	return firestore.NewClient(ctx, projectID)
 }
 
-func setupGmailWatch(srv *gmailapi.Service) error {
-	req := &gmailapi.WatchRequest{
-		TopicName: os.Getenv("PUBSUB_TOPIC_NAME"),
-		LabelIds:  []string{"INBOX"},
-	}
-
-	resp, err := srv.Users.Watch("me", req).Do()
-	if err != nil {
-		return fmt.Errorf("failed to set up Gmail watch: %v", err)
-	}
-
-	logger.Info.Printf("📌 Gmail watch established. New history ID: %v", resp.HistoryId)
-	return nil
+type responseWriter struct {
+	http.ResponseWriter
+	status int
 }
 
-func refreshWatchPeriodically(srv *gmailapi.Service, done chan bool) {
-	ticker := time.NewTicker(24 * time.Hour)
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				if err := setupGmailWatch(srv); err != nil {
-					logger.Error.Printf("❌ Failed to refresh Gmail watch: %v", err)
-				} else {
-					logger.Info.Println("✅ Gmail watch refreshed")
-				}
-			case <-done:
-				ticker.Stop()
-				return
-			}
-		}
-	}()
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		logger.Info.Printf("📥 Incoming request: %s %s", r.Method, r.URL.Path)
+		logger.Info.Printf("Headers: %+v", r.Header)
+		logger.Info.Printf("Proto: %s", r.Proto)
+		logger.Info.Printf("TLS: %v", r.TLS != nil)
+
+		rw := &responseWriter{ResponseWriter: w}
+		next.ServeHTTP(rw, r)
+
+		duration := time.Since(start)
+		logger.Info.Printf("📤 Response: %d %s (%v)", rw.status, http.StatusText(rw.status), duration)
+	})
 }
 
 func main() {
@@ -87,7 +81,6 @@ func main() {
 
 	state := &AppState{}
 
-	// Setup context with timeout for initialization
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -106,46 +99,32 @@ func main() {
 			return
 		}
 
-		if err := setupGmailWatch(state.srv); err != nil {
-			logger.Error.Printf("❌ Failed to set up initial Gmail watch: %v", err)
+		if err := gmail.InitFirestoreHistory(ctx, state.srv, state.fsClient); err != nil {
+			logger.Error.Printf("❌ Failed to initialize Firestore history: %v", err)
 		} else {
-			logger.Info.Println("✅ Initial Gmail watch established")
+			logger.Info.Println("✅ Firestore history initialized")
 		}
 
-		// Start periodic refresh
-		done := make(chan bool)
-		refreshWatchPeriodically(state.srv, done)
-
-		// Initialize history ID
-		msg, err := gmail.GetLatestMessage(state.srv, "me")
-		if err != nil {
-			logger.Warn.Printf("⚠️ Failed to fetch latest Gmail message: %v", err)
-		} else {
-			if err := gmail.SaveHistoryIDToFirestore(ctx, state.fsClient, msg.HistoryId); err != nil {
-				logger.Warn.Printf("⚠️ Failed to overwrite history ID in Firestore: %v", err)
-			} else {
-				logger.Info.Printf("✅ Latest Gmail history ID (%v) saved to Firestore", msg.HistoryId)
-			}
-		}
-
-		// Mark the application as ready
 		state.setReady(true)
 		logger.Info.Println("✅ Application initialization complete")
 	}()
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		logger.Info.Printf("🏓 Ping received from: %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "pong")
-	})
+	// Debug endpoint
+	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
+		info := map[string]interface{}{
+			"protocol": r.Proto,
+			"tls":      r.TLS != nil,
+			"headers":  r.Header,
+			"remote":   r.RemoteAddr,
+			"host":     r.Host,
+			"method":   r.Method,
+			"path":     r.URL.Path,
+		}
 
-	// Add this with other http.HandleFunc calls
-	mux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
-		logger.Info.Println("🔍 Test endpoint called")
-		TestHandler(w, r)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(info)
 	})
 
 	// Health check endpoint
@@ -159,70 +138,35 @@ func main() {
 		}
 	})
 
-	// Setup other endpoints
-	mux.HandleFunc("/retrieve", func(w http.ResponseWriter, r *http.Request) {
-		if !state.isReady() {
-			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
-			return
-		}
-		gmail.HistoryRetrieveHandler(w, r)
-	})
-
-	mux.HandleFunc("/setup-watch", func(w http.ResponseWriter, r *http.Request) {
-		if !state.isReady() {
-			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
-			return
-		}
-		if err := setupGmailWatch(state.srv); err != nil {
-			logger.Error.Printf("❌ %v", err)
-			http.Error(w, "Gmail watch setup failed", 500)
-			return
-		}
-		fmt.Fprintln(w, "✅ Gmail watch successfully re-established!")
-	})
-
+	// Notify endpoint with enhanced error handling
 	mux.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				logger.Error.Printf("🔥 Panic recovered in /notify: %v", rec)
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-			}
-		}()
-
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		if !state.isReady() {
+			http.Error(w, "Service initializing", http.StatusServiceUnavailable)
 			return
 		}
-
-		logger.Info.Printf("📬 /notify invoked from: %s", r.RemoteAddr)
-
-		// 🕵️ Log the raw request body
-		body, _ := io.ReadAll(r.Body)
-		logger.Info.Printf("📨 Raw /notify body: %s", string(body))
-
-		// 🔁 Reuse body for PubSubHandler
-		r.Body = io.NopCloser(bytes.NewReader(body))
-
-		logger.Info.Println("🔍 About to call gmail.PubSubHandler")
 
 		err := gmail.PubSubHandler(w, r)
 		if err != nil {
 			logger.Error.Printf("❌ PubSubHandler error: %v", err)
-
 			switch {
-			case err.Error() == "app not ready: token not available yet":
+			case strings.Contains(err.Error(), "not ready"):
 				http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			case strings.Contains(err.Error(), "invalid"):
 				http.Error(w, err.Error(), http.StatusBadRequest)
-			case strings.Contains(err.Error(), "timeout"):
-				http.Error(w, "Request timeout", http.StatusGatewayTimeout)
 			default:
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 			}
-			return
 		}
+	})
 
-		logger.Info.Println("📬 PubSubHandler returned without error — success response already sent")
+	// Other endpoints...
+	mux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
+		logger.Info.Printf("📝 Test handler called from: %s", r.RemoteAddr)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "ok",
+			"time":   time.Now().Format(time.RFC3339),
+		})
 	})
 
 	port := os.Getenv("PORT")
@@ -230,51 +174,62 @@ func main() {
 		port = "8080"
 	}
 
+	// Create connection state monitoring channel
+	connStateChan := make(chan http.ConnState, 100)
+
+	// Configure server with explicit TLS settings
 	srv := &http.Server{
-		Addr:           "0.0.0.0:" + port,
-		Handler:        mux,
-		ReadTimeout:    60 * time.Second,  // Increased from 15
-		WriteTimeout:   60 * time.Second,  // Increased from 15
-		IdleTimeout:    120 * time.Second, // Added idle timeout
+		Addr:    fmt.Sprintf("0.0.0.0:%s", port),
+		Handler: loggingMiddleware(mux),
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			NextProtos: []string{"h2", "http/1.1"},
+		},
+		ReadTimeout:    60 * time.Second,
+		WriteTimeout:   60 * time.Second,
+		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 1 << 20,
+		ConnState: func(conn net.Conn, state http.ConnState) {
+			select {
+			case connStateChan <- state:
+				logger.Debug.Printf("Connection from %v changed to %v", conn.RemoteAddr(), state)
+			default:
+				logger.Warn.Printf("Connection state channel full, dropped state %v for %v", state, conn.RemoteAddr())
+			}
+		},
 	}
 
-	logger.Info.Printf("🚀 Listening on 0.0.0.0:%s...", port)
-	logger.Info.Println("🧭 Running build version:", os.Getenv("BUILD_VERSION"))
+	// Monitor connection states
+	go func() {
+		for state := range connStateChan {
+			logger.Info.Printf("🔌 Connection state changed to: %v", state)
+		}
+	}()
+
+	// Log server configuration
+	logger.Info.Printf("🔍 Server Configuration:")
+	logger.Info.Printf("- Address: %s", srv.Addr)
+	logger.Info.Printf("- Read Timeout: %v", srv.ReadTimeout)
+	logger.Info.Printf("- Write Timeout: %v", srv.WriteTimeout)
+	logger.Info.Printf("- TLS Min Version: %v", tls.VersionTLS12)
+	logger.Info.Printf("- Registered Routes:")
+	WalkMuxPaths(mux)
+
+	logger.Info.Printf("🚀 Server starting on %s", srv.Addr)
+	logger.Info.Printf("🌐 Build Version: %s", os.Getenv("BUILD_VERSION"))
+
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Error.Fatalf("❌ Server failed to start: %v", err)
 	}
 }
 
-//Test Handler
-//This handler is used to test the server is running and responding to requests.
+func WalkMuxPaths(mux *http.ServeMux) {
+	rv := reflect.ValueOf(mux).Elem()
+	rv = rv.FieldByName("m")
 
-func TestHandler(w http.ResponseWriter, r *http.Request) {
-	logger.Info.Printf("📝 Test handler called from: %s", r.RemoteAddr)
-
-	// Log request details
-	logger.Info.Printf("Method: %s", r.Method)
-	logger.Info.Printf("Headers: %+v", r.Header)
-
-	// Read and log body if present
-	if r.Body != nil {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			logger.Error.Printf("❌ Error reading body: %v", err)
-		} else {
-			logger.Info.Printf("Body: %s", string(body))
+	if rv.IsValid() {
+		for _, k := range rv.MapKeys() {
+			logger.Info.Printf("  - %s", k.String())
 		}
-		// Reset body for other handlers
-		r.Body = io.NopCloser(bytes.NewBuffer(body))
 	}
-
-	// Send response
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	response := map[string]interface{}{
-		"status":    "ok",
-		"message":   "Test handler working",
-		"timestamp": time.Now().Format(time.RFC3339),
-	}
-	json.NewEncoder(w).Encode(response)
 }
